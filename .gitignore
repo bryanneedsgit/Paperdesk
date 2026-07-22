@@ -1,0 +1,25 @@
+node_modules
+dist
+dist-ssr
+*.local
+.local/
+
+# Local development tooling and logs
+.agents/
+.codex/
+.tmp/
+skills-lock.json
+
+# Local test documents (the public repository does not redistribute them)
+/sample*.pdf
+
+src-tauri/target
+src-tauri/gen
+
+.DS_Store
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
