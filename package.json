@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bryanneedsgit/paperdesk-open-source.git"
+    "url": "git+https://github.com/bryanneedsgit/Paperdesk.git"
   },
-  "homepage": "https://github.com/bryanneedsgit/paperdesk-open-source#readme",
+  "homepage": "https://github.com/bryanneedsgit/Paperdesk#readme",
   "bugs": {
-    "url": "https://github.com/bryanneedsgit/paperdesk-open-source/issues"
+    "url": "https://github.com/bryanneedsgit/Paperdesk/issues"
   },
   "type": "module",
   "scripts": {
