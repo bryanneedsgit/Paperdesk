@@ -6,6 +6,22 @@ The left sidebar shows workspace pages as thumbnails. Use it to inspect the full
 
 You can collapse or expand the left sidebar from the top toolbar.
 
+## Page Overview
+
+Choose **Page overview** beside the page controls in the viewer toolbar to replace the center viewer with a scrollable four-column thumbnail grid for the active PDF workspace.
+
+- Select a thumbnail to open that page and return to the document viewer.
+- The current page is marked directly on its thumbnail.
+- Bookmarked pages have a filled **Saved** badge on their thumbnails.
+- Select any thumbnail's bookmark badge to add or remove its bookmark without leaving the overview.
+- Merged workspaces show the source PDF name below each thumbnail.
+
+The overview closes when you select another PDF workspace tab, so it always belongs to the active PDF.
+
+## Bookmarks
+
+Bookmark the current page from the viewer toolbar or from a thumbnail in Page overview. Open **Bookmarks** in the left sidebar to jump to saved pages or remove bookmarks. Bookmarks follow their pages when reordered and are included in workspace autosave metadata.
+
 ## Select Pages
 
 Select pages in the thumbnail sidebar before deleting, rotating, moving, or exporting selected pages.
@@ -40,5 +56,6 @@ Use the viewer toolbar to:
 - Go to the previous page.
 - Go to the next page.
 - Type a page number to jump directly to that page.
+- Open Page overview to scan four large thumbnails per row.
 
 The status bar shows the current page number, total page count, zoom level, active source file, and whether the workspace has edits.

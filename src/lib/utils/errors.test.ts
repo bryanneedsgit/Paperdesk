@@ -7,10 +7,8 @@ describe('friendly PDF error classification', () => {
     const error = classifyPdfOpenError(new Error('PasswordException: NeedPassword'));
 
     expect(error.code).toBe('password-protected');
-    expect(error.userMessage).toBe(
-      'This PDF appears to be password-protected. Password support is not available yet.',
-    );
-    expect(error.suggestion).toContain('Remove the password');
+    expect(error.userMessage).toBe('This password-protected PDF could not be unlocked.');
+    expect(error.suggestion).toContain('Check the password');
   });
 
   it('maps corrupted PDF parse failures to a recovery suggestion', () => {

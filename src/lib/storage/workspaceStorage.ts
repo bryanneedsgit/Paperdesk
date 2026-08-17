@@ -13,7 +13,7 @@ export type WorkspaceStorageSettings = {
 
 export type AutosavedWorkspaceDocument = Pick<
   PdfDocumentSource,
-  'fileName' | 'filePath' | 'id' | 'loadedAt' | 'pageCount'
+  'fileName' | 'filePath' | 'id' | 'loadedAt' | 'pageCount' | 'security'
 >;
 
 type AutosavedPageItem = PdfPageItem & { thumbnailDataUrl?: undefined };
@@ -56,6 +56,7 @@ function toAutosavedDocument(document: PdfDocumentSource): AutosavedWorkspaceDoc
     filePath: document.filePath,
     pageCount: document.pageCount,
     loadedAt: document.loadedAt,
+    security: document.security,
   };
 }
 
@@ -171,9 +172,21 @@ export function createWorkspaceFromAutosave(
   documents: PdfDocumentSource[],
 ): PdfWorkspace {
   const documentsById = new Map(documents.map((document) => [document.id, document]));
+  const pages = snapshot.workspace.pages.map((page) => ({ ...page }));
+  const visiblePageIds = new Set(pages.filter((page) => !page.deleted).map((page) => page.id));
+  const bookmarkedPageIds = Array.isArray(snapshot.workspace.bookmarkedPageIds)
+    ? Array.from(
+        new Set(
+          snapshot.workspace.bookmarkedPageIds.filter(
+            (pageId): pageId is string => typeof pageId === 'string' && visiblePageIds.has(pageId),
+          ),
+        ),
+      )
+    : [];
 
   return {
     ...snapshot.workspace,
+    bookmarkedPageIds,
     documents: snapshot.workspace.documents.map((document) => {
       const hydratedDocument = documentsById.get(document.id);
 
@@ -183,7 +196,7 @@ export function createWorkspaceFromAutosave(
 
       return hydratedDocument;
     }),
-    pages: snapshot.workspace.pages.map((page) => ({ ...page })),
+    pages,
   };
 }
 
@@ -240,19 +253,27 @@ export async function writeAutosavedWorkspaceSources(workspace: PdfWorkspace): P
       new Promise<void>((resolve, reject) => {
         const transaction = database.transaction(workspaceSourceStoreName, 'readwrite');
         const store = transaction.objectStore(workspaceSourceStoreName);
-        const activeDocumentIds = new Set(workspace.documents.map((document) => document.id));
+        const cacheableDocumentIds = new Set(
+          workspace.documents
+            .filter((document) => !document.security?.wasEncrypted)
+            .map((document) => document.id),
+        );
 
         store.getAllKeys().onsuccess = (event) => {
           const keys = (event.target as IDBRequest<IDBValidKey[]>).result;
 
           for (const key of keys) {
-            if (typeof key === 'string' && !activeDocumentIds.has(key)) {
+            if (typeof key === 'string' && !cacheableDocumentIds.has(key)) {
               store.delete(key);
             }
           }
         };
 
         for (const document of workspace.documents) {
+          if (document.security?.wasEncrypted) {
+            continue;
+          }
+
           const storedDocument: StoredWorkspaceSourceDocument = {
             bytes: document.bytes.slice().buffer,
             fileName: document.fileName,

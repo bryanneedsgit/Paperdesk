@@ -68,6 +68,9 @@ export type PdfDocumentSource = {
   pageCount: number;
   loadedAt: string;
   formFields?: PdfFormField[];
+  security?: {
+    wasEncrypted: true;
+  };
 };
 
 export type DocumentModel = PdfDocumentSource;
@@ -196,6 +199,7 @@ export type PdfWorkspace = {
   name: string;
   documents: PdfDocumentSource[];
   pages: PdfPageItem[];
+  bookmarkedPageIds: PdfPageId[];
   selectedPageIds: PdfPageId[];
   activePageId?: PdfPageId;
   formatterSettings: PdfFormatterSettings;

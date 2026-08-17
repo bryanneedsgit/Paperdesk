@@ -17,7 +17,7 @@ type WorkspaceTabsProps = {
   onChangeWorkspaceColor: (workspaceId: string, color: string) => void;
   onChangeWorkspaceFont: (workspaceId: string, fontFamily: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
-  onNewWorkspace: () => void;
+  onOpenPdf: () => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   tabs: WorkspaceTabItem[];
@@ -76,7 +76,7 @@ export function WorkspaceTabs({
   onChangeWorkspaceColor,
   onChangeWorkspaceFont,
   onCloseWorkspace,
-  onNewWorkspace,
+  onOpenPdf,
   onRenameWorkspace,
   onSelectWorkspace,
   tabs,
@@ -254,8 +254,8 @@ export function WorkspaceTabs({
       <button
         className="workspace-tab-new"
         disabled={isBusy}
-        onClick={onNewWorkspace}
-        title="Open PDF in a new workspace"
+        onClick={onOpenPdf}
+        title="Open PDF"
         type="button"
       >
         <FilePlus2 size={15} />

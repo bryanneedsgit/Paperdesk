@@ -778,12 +778,19 @@ function getPdfDocumentCacheKey(sourceDocument: PdfDocumentSource): string {
   return `${sourceDocument.id}:${sourceDocument.loadedAt}`;
 }
 
-function getDefaultExportFileName(workspace: PdfWorkspace): string {
+export function getDefaultExportFileName(workspace: PdfWorkspace): string {
   if (workspace.documents.length === 1) {
     return ensurePdfExtension(workspace.documents[0].fileName);
   }
 
   return 'merged-paperdesk.pdf';
+}
+
+export function getSuffixedExportFileName(
+  workspace: PdfWorkspace,
+  suffix: 'protected' | 'unlocked',
+): string {
+  return getDefaultExportFileName(workspace).replace(/\.pdf$/i, `-${suffix}.pdf`);
 }
 
 function ensurePdfExtension(filePath: string): string {
@@ -826,6 +833,7 @@ function createSubsetWorkspace(workspace: PdfWorkspace, pageIds: PdfPageId[]): P
   return {
     ...workspace,
     pages,
+    bookmarkedPageIds: workspace.bookmarkedPageIds.filter((pageId) => pageIdSet.has(pageId)),
     selectedPageIds: pages.map((page) => page.id),
     activePageId: pages[0]?.id,
   };
@@ -1211,6 +1219,31 @@ export async function saveWorkspacePdf(workspace: PdfWorkspace): Promise<PdfSave
 
   return writeExportedPdf({
     bytes: await exportWorkspaceToPdf(workspace),
+    filePath,
+    pageCount: getVisiblePages(workspace).length,
+    workspace,
+  });
+}
+
+export async function saveWorkspacePdfBytes({
+  bytes,
+  defaultPath,
+  title,
+  workspace,
+}: {
+  bytes: Uint8Array;
+  defaultPath: string;
+  title: string;
+  workspace: PdfWorkspace;
+}): Promise<PdfSaveResult | null> {
+  const filePath = await chooseExportPath({ defaultPath, title });
+
+  if (!filePath) {
+    return null;
+  }
+
+  return writeExportedPdf({
+    bytes,
     filePath,
     pageCount: getVisiblePages(workspace).length,
     workspace,

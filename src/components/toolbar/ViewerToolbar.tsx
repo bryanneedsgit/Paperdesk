@@ -1,4 +1,12 @@
-import { ChevronLeft, ChevronRight, Hand, RotateCcw, RotateCw } from 'lucide-react';
+import {
+  Bookmark,
+  ChevronLeft,
+  ChevronRight,
+  Hand,
+  LayoutGrid,
+  RotateCcw,
+  RotateCw,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -18,6 +26,8 @@ type ViewerToolbarProps = {
   isAnnotating: boolean;
   isFindOpen: boolean;
   isHandToolActive: boolean;
+  isActivePageBookmarked: boolean;
+  isPageOverviewOpen: boolean;
   onGoNext: () => void;
   onGoPrevious: () => void;
   onChangeFindQuery: (query: string) => void;
@@ -29,7 +39,9 @@ type ViewerToolbarProps = {
   onRotateRight: () => void;
   onSelectAnnotationTool: (tool: PdfAnnotationTool) => void;
   onToggleAnnotating: () => void;
+  onToggleActivePageBookmark: () => void;
   onToggleHandTool: () => void;
+  onTogglePageOverview: () => void;
   pageCount: number;
   selectedAnnotationTool: PdfAnnotationTool;
   workspace: PdfWorkspace | null;
@@ -158,6 +170,8 @@ export function ViewerToolbar({
   isAnnotating,
   isFindOpen,
   isHandToolActive,
+  isActivePageBookmarked,
+  isPageOverviewOpen,
   onChangeFindQuery,
   onCloseFind,
   onFindNext,
@@ -169,7 +183,9 @@ export function ViewerToolbar({
   onRotateRight,
   onSelectAnnotationTool,
   onToggleAnnotating,
+  onToggleActivePageBookmark,
   onToggleHandTool,
+  onTogglePageOverview,
   pageCount,
   selectedAnnotationTool,
   workspace,
@@ -226,6 +242,27 @@ export function ViewerToolbar({
         </label>
         <IconButton disabled={disabled || !canGoNext} label="Next page" onClick={onGoNext}>
           <ChevronRight size={17} />
+        </IconButton>
+        <span className="viewer-toolbar-separator" aria-hidden="true" />
+        <IconButton
+          disabled={disabled}
+          isPressed={isActivePageBookmarked}
+          label={
+            isActivePageBookmarked
+              ? `Remove bookmark from page ${activePageNumber}`
+              : `Bookmark page ${activePageNumber}`
+          }
+          onClick={onToggleActivePageBookmark}
+        >
+          <Bookmark fill={isActivePageBookmarked ? 'currentColor' : 'none'} size={16} />
+        </IconButton>
+        <IconButton
+          disabled={disabled}
+          isPressed={isPageOverviewOpen}
+          label={isPageOverviewOpen ? 'Close page overview' : 'Open page overview'}
+          onClick={onTogglePageOverview}
+        >
+          <LayoutGrid size={16} />
         </IconButton>
       </div>
 

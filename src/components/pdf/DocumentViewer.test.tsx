@@ -31,6 +31,7 @@ function flushAnimationFrames() {
 function createWorkspace(zoom = 1): PdfWorkspace {
   return {
     annotations: [],
+    bookmarkedPageIds: [],
     documents: [],
     formFieldValues: {},
     formSettings: {
@@ -106,7 +107,6 @@ function createDocumentViewerProps(
     annotationStrokeWidth: 3,
     canGoNext: false,
     canGoPrevious: false,
-    error: null,
     eraserSize: 18,
     freehandSensitivity: 'medium',
     highlightBrushSize: 14,

@@ -7,11 +7,18 @@ import { X } from 'lucide-react';
 
 import { TopToolbar } from '../components/layout/TopToolbar';
 import { ExportPagesModal, type ExportPagesModalMode } from '../components/pdf/ExportPagesModal';
+import {
+  PdfPasswordDialog,
+  ProtectedPdfExportDialog,
+  type PdfPasswordDialogRequest,
+  type ProtectedPdfExportChoice,
+} from '../components/pdf/PdfSecurityDialogs';
 import { FeatureGuideDialog } from '../components/guide/FeatureGuideDialog';
 import { ToolsPanel, type ToolPanelId } from '../components/layout/ToolsPanel';
 import type { AnnotationFontPatch } from '../components/annotations/AnnotationsPanel';
 import { WorkspaceTabs, type WorkspaceTabItem } from '../components/layout/WorkspaceTabs';
 import { DocumentViewer } from '../components/pdf/DocumentViewer';
+import { PageOverview } from '../components/pdf/PageOverview';
 import {
   CollapsedThumbnailSidebar,
   ThumbnailSidebar,
@@ -41,10 +48,14 @@ import {
 } from '../lib/pdf/annotationStroke';
 import { cloneFreehandAnnotationsForPaste } from '../lib/pdf/annotationClipboard';
 import {
+  exportWorkspaceToPdfBytes,
+  getDefaultExportFileName,
   getPdfExportErrorMessage,
+  getSuffixedExportFileName,
   savePageSubsetPdf,
   saveWorkspacePageRanges,
   saveWorkspacePdf,
+  saveWorkspacePdfBytes,
   type PdfPageRange,
 } from '../lib/pdf/pdfExporter';
 import {
@@ -54,7 +65,15 @@ import {
   loadPdfFromBytes,
   openPdfDocuments,
   pickPdfPath,
+  type PdfLoadOptions,
 } from '../lib/pdf/pdfLoader';
+import {
+  getPdfSecurityErrorMessage,
+  isPdfPasswordCancelledError,
+  PdfSecurityError,
+  protectPdfBytes,
+  type PdfPasswordProvider,
+} from '../lib/pdf/pdfSecurity';
 import { searchWorkspaceText, type PdfTextSearchResult } from '../lib/pdf/pdfTextSearch';
 import {
   appendDocumentsToWorkspace,
@@ -72,6 +91,7 @@ import {
   recordAnnotationMove,
   rotatePages,
   selectAllPages,
+  togglePageBookmark,
   updateAnnotation,
   updateWorkspaceFormFieldValue,
   updateWorkspaceFormSettings,
@@ -370,6 +390,7 @@ function validateRecoveredDocument(
 
 async function loadRecoveredDocumentFromCache(
   source: AutosavedWorkspaceDocument,
+  options: PdfLoadOptions = {},
 ): Promise<PdfDocumentSource | null> {
   const cachedSource = await readAutosavedWorkspaceSource(source.id);
 
@@ -383,6 +404,7 @@ async function loadRecoveredDocumentFromCache(
       bytes: new Uint8Array(cachedSource.bytes),
       fileName: cachedSource.fileName,
       filePath: cachedSource.filePath,
+      ...options,
     }),
   );
 }
@@ -415,11 +437,11 @@ export function AppShell() {
   const [isDraggingPdfs, setIsDraggingPdfs] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [exportModalMode, setExportModalMode] = useState<ExportPagesModalMode | null>(null);
-  const [openError, setOpenError] = useState<string | null>(null);
   const [workspaceToast, setWorkspaceToast] = useState<WorkspaceToast | null>(null);
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanelId>('document');
   const [isToolsPanelCollapsed, setIsToolsPanelCollapsed] = useState(false);
   const [isThumbnailSidebarCollapsed, setIsThumbnailSidebarCollapsed] = useState(false);
+  const [isPageOverviewOpen, setIsPageOverviewOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isHandToolActive, setIsHandToolActive] = useState(false);
@@ -457,9 +479,17 @@ export function AppShell() {
   const [appTheme, setAppTheme] = useState<AppTheme>(readAppTheme);
   const [pendingPdfImportRequest, setPendingPdfImportRequest] =
     useState<PendingPdfImportRequest | null>(null);
+  const [pendingPdfPasswordRequest, setPendingPdfPasswordRequest] =
+    useState<PdfPasswordDialogRequest | null>(null);
+  const [isProtectedExportChoiceOpen, setIsProtectedExportChoiceOpen] = useState(false);
   const pendingPdfImportResolverRef = useRef<((target: PdfImportTarget | null) => void) | null>(
     null,
   );
+  const pendingPdfPasswordResolverRef = useRef<((password: string | null) => void) | null>(null);
+  const pendingProtectedExportResolverRef = useRef<
+    ((choice: ProtectedPdfExportChoice | null) => void) | null
+  >(null);
+  const documentPasswordsRef = useRef<Map<string, string>>(new Map());
   const annotationPasteTargetRef = useRef<PdfAnnotationPasteTarget | null>(null);
   const activeWorkspaceTab = useMemo(
     () =>
@@ -517,6 +547,10 @@ export function AppShell() {
   }, [visiblePages, workspace?.activePageId]);
 
   const activePageNumber = activePageIndex >= 0 ? activePageIndex + 1 : 0;
+  const activePage = activePageIndex >= 0 ? visiblePages[activePageIndex] : undefined;
+  const isActivePageBookmarked = Boolean(
+    activePage && workspace?.bookmarkedPageIds.includes(activePage.id),
+  );
   const pageCount = visiblePages.length;
   const zoomPercent = workspace ? Math.round(workspace.formatterSettings.zoom * 100) : 100;
   const isLoadingPdf = isOpeningPdf || isAddingPdfs;
@@ -535,6 +569,8 @@ export function AppShell() {
     !isSettingsOpen &&
     !isShortcutHelpOpen &&
     !pendingPdfImportRequest &&
+    !pendingPdfPasswordRequest &&
+    !isProtectedExportChoiceOpen &&
     !exportModalMode;
   const selectedAnnotation = useMemo(
     () => workspace?.annotations.find((annotation) => annotation.id === selectedAnnotationId),
@@ -551,6 +587,16 @@ export function AppShell() {
       setIsStatusZoomOpen(false);
     }
   }, [pageCount, workspace]);
+
+  useEffect(() => {
+    setIsPageOverviewOpen(false);
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (pageCount === 0) {
+      setIsPageOverviewOpen(false);
+    }
+  }, [pageCount]);
 
   const findStatus = !workspace
     ? 'Open a PDF'
@@ -801,6 +847,206 @@ export function AppShell() {
     });
   }, []);
 
+  const handleTogglePageBookmark = useCallback(
+    (pageId: PdfPageId) => {
+      const currentWorkspace = workspaceRef.current;
+      const page = currentWorkspace?.pages.find(
+        (candidatePage) => candidatePage.id === pageId && !candidatePage.deleted,
+      );
+
+      if (!currentWorkspace || !page) {
+        return;
+      }
+
+      const isBookmarked = currentWorkspace.bookmarkedPageIds.includes(pageId);
+
+      updatePresentWorkspace((currentWorkspace) => togglePageBookmark(currentWorkspace, pageId));
+      showToast(
+        isBookmarked
+          ? `Removed bookmark from page ${page.displayIndex}.`
+          : `Bookmarked page ${page.displayIndex}.`,
+        'success',
+      );
+    },
+    [showToast, updatePresentWorkspace],
+  );
+
+  const handleToggleActivePageBookmark = useCallback(() => {
+    if (activePage) {
+      handleTogglePageBookmark(activePage.id);
+    }
+  }, [activePage, handleTogglePageBookmark]);
+
+  const handleTogglePageOverview = useCallback(() => {
+    if (!activeWorkspaceId || pageCount === 0) {
+      return;
+    }
+
+    setIsPageOverviewOpen((currentValue) => !currentValue);
+  }, [activeWorkspaceId, pageCount]);
+
+  const closePageOverview = useCallback(() => {
+    setIsPageOverviewOpen(false);
+  }, []);
+
+  const resolvePendingPdfPassword = useCallback((password: string | null) => {
+    const resolver = pendingPdfPasswordResolverRef.current;
+    pendingPdfPasswordResolverRef.current = null;
+    setPendingPdfPasswordRequest(null);
+    resolver?.(password);
+  }, []);
+
+  const requestPdfPassword = useCallback<PdfPasswordProvider>((request) => {
+    pendingPdfPasswordResolverRef.current?.(null);
+
+    return new Promise((resolve) => {
+      pendingPdfPasswordResolverRef.current = resolve;
+      setPendingPdfPasswordRequest({
+        ...request,
+        id: crypto.randomUUID(),
+        kind: 'open',
+      });
+    });
+  }, []);
+
+  const requestNewPdfPassword = useCallback(
+    ({
+      description,
+      submitLabel,
+      title,
+    }: {
+      description: string;
+      submitLabel: string;
+      title: string;
+    }): Promise<string | null> => {
+      pendingPdfPasswordResolverRef.current?.(null);
+
+      return new Promise((resolve) => {
+        pendingPdfPasswordResolverRef.current = resolve;
+        setPendingPdfPasswordRequest({
+          description,
+          id: crypto.randomUUID(),
+          kind: 'create',
+          submitLabel,
+          title,
+        });
+      });
+    },
+    [],
+  );
+
+  const resolveProtectedExportChoice = useCallback((choice: ProtectedPdfExportChoice | null) => {
+    const resolver = pendingProtectedExportResolverRef.current;
+    pendingProtectedExportResolverRef.current = null;
+    setIsProtectedExportChoiceOpen(false);
+    resolver?.(choice);
+  }, []);
+
+  const requestProtectedExportChoice = useCallback((): Promise<ProtectedPdfExportChoice | null> => {
+    pendingProtectedExportResolverRef.current?.(null);
+
+    return new Promise((resolve) => {
+      pendingProtectedExportResolverRef.current = resolve;
+      setIsProtectedExportChoiceOpen(true);
+    });
+  }, []);
+
+  const rememberAcceptedPasswords = useCallback(
+    (documents: PdfDocumentSource[], acceptedPasswords: string[]) => {
+      let passwordIndex = 0;
+
+      for (const document of documents) {
+        if (!document.security?.wasEncrypted) {
+          continue;
+        }
+
+        documentPasswordsRef.current.set(document.id, acceptedPasswords[passwordIndex] ?? '');
+        passwordIndex += 1;
+      }
+    },
+    [],
+  );
+
+  const loadPdfDocumentsForSession = useCallback(
+    async (paths: string[]): Promise<PdfDocumentSource[]> => {
+      const acceptedPasswords: string[] = [];
+      const documents = await loadPdfDocumentsFromPaths(paths, {
+        onPasswordAccepted: (password) => acceptedPasswords.push(password),
+        requestPassword: requestPdfPassword,
+      });
+
+      rememberAcceptedPasswords(documents, acceptedPasswords);
+      return documents;
+    },
+    [rememberAcceptedPasswords, requestPdfPassword],
+  );
+
+  const openPdfDocumentsForSession = useCallback(async (): Promise<PdfDocumentSource[]> => {
+    const acceptedPasswords: string[] = [];
+    const documents = await openPdfDocuments({
+      onPasswordAccepted: (password) => acceptedPasswords.push(password),
+      requestPassword: requestPdfPassword,
+    });
+
+    rememberAcceptedPasswords(documents, acceptedPasswords);
+    return documents;
+  }, [rememberAcceptedPasswords, requestPdfPassword]);
+
+  const loadPdfPathForSession = useCallback(
+    async (path: string, sessionDocumentId?: string): Promise<PdfDocumentSource> => {
+      let acceptedPassword = '';
+      let wasPasswordAccepted = false;
+      const document = await loadPdfFromPath(path, {
+        onPasswordAccepted: (password) => {
+          acceptedPassword = password;
+          wasPasswordAccepted = true;
+        },
+        requestPassword: requestPdfPassword,
+      });
+
+      if (wasPasswordAccepted) {
+        documentPasswordsRef.current.set(sessionDocumentId ?? document.id, acceptedPassword);
+      }
+
+      return document;
+    },
+    [requestPdfPassword],
+  );
+
+  const loadRecoveredDocumentFromCacheForSession = useCallback(
+    async (source: AutosavedWorkspaceDocument): Promise<PdfDocumentSource | null> => {
+      let acceptedPassword = '';
+      let wasPasswordAccepted = false;
+      const document = await loadRecoveredDocumentFromCache(source, {
+        onPasswordAccepted: (password) => {
+          acceptedPassword = password;
+          wasPasswordAccepted = true;
+        },
+        requestPassword: requestPdfPassword,
+      });
+
+      if (document && wasPasswordAccepted) {
+        documentPasswordsRef.current.set(source.id, acceptedPassword);
+      }
+
+      return document;
+    },
+    [requestPdfPassword],
+  );
+
+  useEffect(
+    () => () => {
+      const passwordResolver = pendingPdfPasswordResolverRef.current;
+      const exportResolver = pendingProtectedExportResolverRef.current;
+      pendingPdfPasswordResolverRef.current = null;
+      pendingProtectedExportResolverRef.current = null;
+      passwordResolver?.(null);
+      exportResolver?.(null);
+      documentPasswordsRef.current.clear();
+    },
+    [],
+  );
+
   const handleChangeStorageSettings = useCallback(
     (settingsPatch: Partial<WorkspaceStorageSettings>) => {
       setStorageSettings((currentSettings) => {
@@ -865,8 +1111,6 @@ export function AppShell() {
     }
 
     setIsRecoveringWorkspace(true);
-    setOpenError(null);
-
     try {
       const documents: PdfDocumentSource[] = [];
       const missingSourceIds: string[] = [];
@@ -883,18 +1127,22 @@ export function AppShell() {
           try {
             const document = validateRecoveredDocument(
               source,
-              await loadPdfFromPath(source.filePath),
+              await loadPdfPathForSession(source.filePath, source.id),
             );
 
             documents.push(document);
             continue;
           } catch (error) {
+            if (isPdfPasswordCancelledError(error)) {
+              throw error;
+            }
+
             logDeveloperError(`Recovered source unavailable: ${source.fileName}`, error);
           }
         }
 
         try {
-          const document = await loadRecoveredDocumentFromCache(source);
+          const document = await loadRecoveredDocumentFromCacheForSession(source);
 
           if (!document) {
             missingSourceIds.push(source.id);
@@ -903,6 +1151,10 @@ export function AppShell() {
 
           documents.push(document);
         } catch (error) {
+          if (isPdfPasswordCancelledError(error)) {
+            throw error;
+          }
+
           logDeveloperError(`Cached recovered source unavailable: ${source.fileName}`, error);
           missingSourceIds.push(source.id);
         }
@@ -924,8 +1176,11 @@ export function AppShell() {
       );
       showToast('Recovered previous workspace.', 'success');
     } catch (error) {
+      if (isPdfPasswordCancelledError(error)) {
+        return;
+      }
+
       logDeveloperError('Workspace recovery failed.', error);
-      setOpenError(getPdfLoadErrorMessage(error));
       showErrorToast(getPdfLoadErrorMessage(error), error);
     } finally {
       setIsRecoveringWorkspace(false);
@@ -933,6 +1188,8 @@ export function AppShell() {
   }, [
     recoveryRelinkedDocuments,
     recoverySnapshot,
+    loadPdfPathForSession,
+    loadRecoveredDocumentFromCacheForSession,
     rememberRecentFiles,
     replaceWorkspace,
     showErrorToast,
@@ -960,10 +1217,11 @@ export function AppShell() {
       }
 
       setIsRecoveringWorkspace(true);
-      setOpenError(null);
-
       try {
-        const document = validateRecoveredDocument(source, await loadPdfFromPath(filePath));
+        const document = validateRecoveredDocument(
+          source,
+          await loadPdfPathForSession(filePath, source.id),
+        );
 
         setRecoveryRelinkedDocuments((currentDocuments) => ({
           ...currentDocuments,
@@ -977,13 +1235,17 @@ export function AppShell() {
         rememberRecentFiles(document.filePath ? [document.filePath] : []);
         showToast(`Relinked ${source.fileName}.`, 'success');
       } catch (error) {
+        if (isPdfPasswordCancelledError(error)) {
+          return;
+        }
+
         logDeveloperError('Recovery source relink failed.', error);
         showErrorToast(getPdfLoadErrorMessage(error), error);
       } finally {
         setIsRecoveringWorkspace(false);
       }
     },
-    [recoverySnapshot, rememberRecentFiles, showErrorToast, showToast],
+    [loadPdfPathForSession, recoverySnapshot, rememberRecentFiles, showErrorToast, showToast],
   );
 
   const deletePageSelection = useCallback(
@@ -1140,7 +1402,6 @@ export function AppShell() {
         return;
       }
 
-      setOpenError(null);
       setWorkspaceToast(null);
       setIsDraggingPdfs(false);
 
@@ -1157,7 +1418,7 @@ export function AppShell() {
       }
 
       try {
-        const documents = await loadPdfDocumentsFromPaths(pdfPaths);
+        const documents = await loadPdfDocumentsForSession(pdfPaths);
 
         if (target.kind === 'workspace') {
           addDocumentsToWorkspaceTab(target.workspaceId, documents);
@@ -1173,8 +1434,11 @@ export function AppShell() {
           );
         }
       } catch (error) {
+        if (isPdfPasswordCancelledError(error)) {
+          return;
+        }
+
         logDeveloperError('PDF import failed.', error);
-        setOpenError(getPdfLoadErrorMessage(error));
         showErrorToast(getPdfLoadErrorMessage(error), error);
       } finally {
         setIsAddingPdfs(false);
@@ -1183,6 +1447,7 @@ export function AppShell() {
     },
     [
       addDocumentsToWorkspaceTab,
+      loadPdfDocumentsForSession,
       openDocumentsInNewWorkspace,
       requestPdfImportTarget,
       showErrorToast,
@@ -1199,31 +1464,6 @@ export function AppShell() {
 
     await handlePdfPathsWithPrompt([path], 'file-picker');
   }, [handlePdfPathsWithPrompt]);
-
-  const handleOpenPdfInNewWorkspace = useCallback(async () => {
-    const path = await pickPdfPath();
-
-    if (!path) {
-      return;
-    }
-
-    setIsOpeningPdf(true);
-    setOpenError(null);
-    setWorkspaceToast(null);
-
-    try {
-      const documents = await loadPdfDocumentsFromPaths([path]);
-
-      openDocumentsInNewWorkspace(documents);
-      showToast('Opened PDF in a new workspace.', 'success');
-    } catch (error) {
-      logDeveloperError('Open PDF in new workspace failed.', error);
-      setOpenError(getPdfLoadErrorMessage(error));
-      showErrorToast(getPdfLoadErrorMessage(error), error);
-    } finally {
-      setIsOpeningPdf(false);
-    }
-  }, [openDocumentsInNewWorkspace, showErrorToast, showToast]);
 
   const handleSelectWorkspaceTab = useCallback((workspaceId: string) => {
     setActiveWorkspaceId(workspaceId);
@@ -1248,6 +1488,10 @@ export function AppShell() {
 
       const tabIndex = workspaceTabs.findIndex((tab) => tab.id === workspaceId);
       const nextTabs = workspaceTabs.filter((tab) => tab.id !== workspaceId);
+
+      for (const document of tabToClose.history.present.documents) {
+        documentPasswordsRef.current.delete(document.id);
+      }
 
       setWorkspaceTabs(nextTabs);
 
@@ -1294,12 +1538,61 @@ export function AppShell() {
       return;
     }
 
+    const protectedDocuments = workspace.documents.filter(
+      (document) => document.security?.wasEncrypted,
+    );
+    let protectionChoice: ProtectedPdfExportChoice = 'unlocked';
+    let protectionPassword: string | null = null;
+
+    if (protectedDocuments.length > 0) {
+      const requestedChoice = await requestProtectedExportChoice();
+
+      if (!requestedChoice) {
+        return;
+      }
+
+      protectionChoice = requestedChoice;
+
+      if (protectionChoice === 'protected') {
+        const sessionPasswords = new Set(
+          protectedDocuments
+            .map((document) => documentPasswordsRef.current.get(document.id))
+            .filter((password): password is string => Boolean(password)),
+        );
+
+        if (sessionPasswords.size === 1) {
+          protectionPassword = Array.from(sessionPasswords)[0];
+        } else {
+          protectionPassword = await requestNewPdfPassword({
+            description:
+              'Set the password that will open this exported copy. The workspace may contain sources with different passwords.',
+            submitLabel: 'Continue to export',
+            title: 'Set export password',
+          });
+        }
+
+        if (protectionPassword === null) {
+          return;
+        }
+      }
+    }
+
     setIsExportingPdf(true);
-    setOpenError(null);
     showToast('Exporting PDF...', 'info');
 
     try {
-      const result = await saveWorkspacePdf(workspace);
+      const result =
+        protectionChoice === 'protected' && protectionPassword !== null
+          ? await saveWorkspacePdfBytes({
+              bytes: await protectPdfBytes(
+                await exportWorkspaceToPdfBytes(workspace),
+                protectionPassword,
+              ),
+              defaultPath: getDefaultExportFileName(workspace),
+              title: 'Export Protected PDF',
+              workspace,
+            })
+          : await saveWorkspacePdf(workspace);
 
       if (!result) {
         setWorkspaceToast(null);
@@ -1312,6 +1605,99 @@ export function AppShell() {
       );
     } catch (error) {
       logDeveloperError('Export PDF failed.', error);
+      showErrorToast(
+        error instanceof PdfSecurityError
+          ? getPdfSecurityErrorMessage(error)
+          : getPdfExportErrorMessage(error),
+        error,
+      );
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [requestNewPdfPassword, requestProtectedExportChoice, showErrorToast, showToast, workspace]);
+
+  const handleLockPdf = useCallback(async () => {
+    if (!workspace || !canExportWorkspace(workspace)) {
+      showToast('Paperdesk cannot lock an empty document.', 'error');
+      return;
+    }
+
+    const password = await requestNewPdfPassword({
+      description:
+        'Set an open password for a new protected copy. Your current workspace will remain unlocked for editing.',
+      submitLabel: 'Choose save location',
+      title: 'Lock PDF copy',
+    });
+
+    if (password === null) {
+      return;
+    }
+
+    setIsExportingPdf(true);
+    showToast('Protecting PDF...', 'info');
+
+    try {
+      const protectedBytes = await protectPdfBytes(
+        await exportWorkspaceToPdfBytes(workspace),
+        password,
+      );
+      const result = await saveWorkspacePdfBytes({
+        bytes: protectedBytes,
+        defaultPath: getSuffixedExportFileName(workspace, 'protected'),
+        title: 'Save Protected PDF Copy',
+        workspace,
+      });
+
+      if (!result) {
+        setWorkspaceToast(null);
+        return;
+      }
+
+      showToast(
+        `Saved a protected copy with ${result.pageCount} ${result.pageCount === 1 ? 'page' : 'pages'}.`,
+        'success',
+      );
+    } catch (error) {
+      logDeveloperError('Protect PDF failed.', error);
+      showErrorToast(
+        error instanceof PdfSecurityError
+          ? getPdfSecurityErrorMessage(error)
+          : getPdfExportErrorMessage(error),
+        error,
+      );
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [requestNewPdfPassword, showErrorToast, showToast, workspace]);
+
+  const handleSaveUnlockedPdf = useCallback(async () => {
+    if (!workspace || !canExportWorkspace(workspace)) {
+      showToast('Paperdesk cannot save an empty document.', 'error');
+      return;
+    }
+
+    setIsExportingPdf(true);
+    showToast('Preparing unlocked copy...', 'info');
+
+    try {
+      const result = await saveWorkspacePdfBytes({
+        bytes: await exportWorkspaceToPdfBytes(workspace),
+        defaultPath: getSuffixedExportFileName(workspace, 'unlocked'),
+        title: 'Save Unlocked PDF Copy',
+        workspace,
+      });
+
+      if (!result) {
+        setWorkspaceToast(null);
+        return;
+      }
+
+      showToast(
+        `Saved an unlocked copy with ${result.pageCount} ${result.pageCount === 1 ? 'page' : 'pages'}.`,
+        'success',
+      );
+    } catch (error) {
+      logDeveloperError('Save unlocked PDF failed.', error);
       showErrorToast(getPdfExportErrorMessage(error), error);
     } finally {
       setIsExportingPdf(false);
@@ -1325,7 +1711,6 @@ export function AppShell() {
     }
 
     setIsExportingPdf(true);
-    setOpenError(null);
     showToast('Exporting selected pages...', 'info');
 
     try {
@@ -1357,7 +1742,6 @@ export function AppShell() {
       }
 
       setIsExportingPdf(true);
-      setOpenError(null);
       showToast('Splitting PDF...', 'info');
 
       try {
@@ -1387,10 +1771,8 @@ export function AppShell() {
 
   const handleAddPdfs = useCallback(async () => {
     setIsAddingPdfs(true);
-    setOpenError(null);
-
     try {
-      const documents = await openPdfDocuments();
+      const documents = await openPdfDocumentsForSession();
 
       if (documents.length === 0) {
         return;
@@ -1398,13 +1780,16 @@ export function AppShell() {
 
       addDocumentsToCurrentWorkspace(documents);
     } catch (error) {
+      if (isPdfPasswordCancelledError(error)) {
+        return;
+      }
+
       logDeveloperError('Add PDFs failed.', error);
-      setOpenError(getPdfLoadErrorMessage(error));
       showErrorToast(getPdfLoadErrorMessage(error), error);
     } finally {
       setIsAddingPdfs(false);
     }
-  }, [addDocumentsToCurrentWorkspace, showErrorToast]);
+  }, [addDocumentsToCurrentWorkspace, openPdfDocumentsForSession, showErrorToast]);
 
   const handleDroppedPdfPaths = useCallback(
     async (paths: string[]) => {
@@ -2469,7 +2854,7 @@ export function AppShell() {
         onChangeWorkspaceColor={handleChangeWorkspaceTabColor}
         onChangeWorkspaceFont={handleChangeWorkspaceTabFont}
         onCloseWorkspace={handleCloseWorkspaceTab}
-        onNewWorkspace={handleOpenPdfInNewWorkspace}
+        onOpenPdf={handleOpenPdf}
         onRenameWorkspace={handleRenameWorkspaceTab}
         onSelectWorkspace={handleSelectWorkspaceTab}
         tabs={workspaceTabSummaries}
@@ -2499,6 +2884,8 @@ export function AppShell() {
         isAnnotating={isAnnotating}
         isFindOpen={isFindOpen}
         isHandToolActive={isHandToolActive}
+        isActivePageBookmarked={isActivePageBookmarked}
+        isPageOverviewOpen={isPageOverviewOpen}
         onChangeFindQuery={setFindQuery}
         onCloseFind={closeFindBar}
         onFindNext={goToNextFindResult}
@@ -2510,7 +2897,9 @@ export function AppShell() {
         onRotateRight={handleRotateSelectedPagesRight}
         onSelectAnnotationTool={handleSelectAnnotationTool}
         onToggleAnnotating={handleToggleAnnotating}
+        onToggleActivePageBookmark={handleToggleActivePageBookmark}
         onToggleHandTool={handleToggleHandTool}
+        onTogglePageOverview={handleTogglePageOverview}
         pageCount={pageCount}
         selectedAnnotationTool={selectedAnnotationTool}
         workspace={workspace}
@@ -2537,45 +2926,55 @@ export function AppShell() {
             onSetSelectedPages={selectPages}
             onThumbnailRendered={handleThumbnailRendered}
             onToggleCollapsed={handleToggleThumbnailSidebar}
+            onTogglePageBookmark={handleTogglePageBookmark}
             onTogglePageSelection={togglePageSelection}
             selectedPageIds={selectedVisiblePageIds}
             workspace={workspace}
           />
         )}
-        <DocumentViewer
-          activeAnnotationTool={selectedAnnotationTool}
-          annotationBorderColor={annotationBorderColor}
-          annotationColor={annotationColor}
-          annotationFillColor={annotationFillColor}
-          annotationStrokeWidth={annotationStrokeWidth}
-          canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
-          canGoPrevious={activePageIndex > 0}
-          error={openError}
-          isHandToolActive={isHandToolActive}
-          isAnnotating={isAnnotating}
-          isLoading={isLoadingPdf}
-          loadingMessage={loadingMessage}
-          eraserSize={eraserSize}
-          freehandSensitivity={freehandSensitivity}
-          highlightBrushSize={highlightBrushSize}
-          highlightOpacity={highlightOpacity}
-          onChangeFormFieldValue={handleChangeFormFieldValue}
-          onCommitAnnotationChange={handleCommitAnnotationChange}
-          onCreateAnnotation={handleCreateAnnotation}
-          onEraseAnnotationPixels={handleEraseAnnotationPixels}
-          onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
-          onSelectAnnotation={setSelectedAnnotationId}
-          onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
-          onUpdateAnnotation={handleUpdateAnnotation}
-          onWheelZoom={handleWheelZoom}
-          onZoomByFactor={handleZoomByFactor}
-          selectedAnnotationId={selectedAnnotationId}
-          spacebarFreehandEnabled={isSpacebarFreehandEnabled}
-          signatureImage={signatureImage}
-          textSearchActiveResult={findResults[findActiveIndex] ?? null}
-          textSearchQuery={isFindOpen ? findQuery : ''}
-          workspace={workspace}
-        />
+        {isPageOverviewOpen && workspace ? (
+          <PageOverview
+            onActivatePage={activatePage}
+            onClose={closePageOverview}
+            onThumbnailRendered={handleThumbnailRendered}
+            onTogglePageBookmark={handleTogglePageBookmark}
+            workspace={workspace}
+          />
+        ) : (
+          <DocumentViewer
+            activeAnnotationTool={selectedAnnotationTool}
+            annotationBorderColor={annotationBorderColor}
+            annotationColor={annotationColor}
+            annotationFillColor={annotationFillColor}
+            annotationStrokeWidth={annotationStrokeWidth}
+            canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
+            canGoPrevious={activePageIndex > 0}
+            isHandToolActive={isHandToolActive}
+            isAnnotating={isAnnotating}
+            isLoading={isLoadingPdf}
+            loadingMessage={loadingMessage}
+            eraserSize={eraserSize}
+            freehandSensitivity={freehandSensitivity}
+            highlightBrushSize={highlightBrushSize}
+            highlightOpacity={highlightOpacity}
+            onChangeFormFieldValue={handleChangeFormFieldValue}
+            onCommitAnnotationChange={handleCommitAnnotationChange}
+            onCreateAnnotation={handleCreateAnnotation}
+            onEraseAnnotationPixels={handleEraseAnnotationPixels}
+            onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
+            onSelectAnnotation={setSelectedAnnotationId}
+            onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
+            onUpdateAnnotation={handleUpdateAnnotation}
+            onWheelZoom={handleWheelZoom}
+            onZoomByFactor={handleZoomByFactor}
+            selectedAnnotationId={selectedAnnotationId}
+            spacebarFreehandEnabled={isSpacebarFreehandEnabled}
+            signatureImage={signatureImage}
+            textSearchActiveResult={findResults[findActiveIndex] ?? null}
+            textSearchQuery={isFindOpen ? findQuery : ''}
+            workspace={workspace}
+          />
+        )}
         <ToolsPanel
           activePanel={activeToolPanel}
           annotationBorderColor={annotationBorderColor}
@@ -2590,6 +2989,7 @@ export function AppShell() {
           highlightOpacity={highlightOpacity}
           isCollapsed={isToolsPanelCollapsed}
           isAddingPdfs={isAddingPdfs}
+          isPdfSecurityBusy={isExportingPdf}
           onAddPdfs={handleAddPdfs}
           onChangeEraserSize={handleChangeEraserSize}
           onChangeFreehandSensitivity={handleChangeFreehandSensitivity}
@@ -2615,10 +3015,12 @@ export function AppShell() {
           onDeleteAnnotation={handleDeleteAnnotation}
           onInsertBlankPage={handleInsertBlankPage}
           onInsertCoverPage={handleInsertCoverPage}
+          onLockPdf={handleLockPdf}
           onImportFormData={handleImportFormData}
           onOpenRecentFile={handleOpenRecentFile}
           onPasteFreehandAnnotation={handlePasteFreehandAnnotation}
           onSetSignatureImage={setSignatureImage}
+          onSaveUnlockedPdf={handleSaveUnlockedPdf}
           onToggleCollapsed={() => setIsToolsPanelCollapsed((currentValue) => !currentValue)}
           recentFiles={recentFiles}
           selectedAnnotationId={selectedAnnotationId}
@@ -2687,6 +3089,22 @@ export function AppShell() {
           onSplitRanges={handleSplitPageRanges}
           pageCount={pageCount}
           selectedPageCount={selectedVisiblePageIds.length}
+        />
+      ) : null}
+
+      {pendingPdfPasswordRequest ? (
+        <PdfPasswordDialog
+          key={pendingPdfPasswordRequest.id}
+          onCancel={() => resolvePendingPdfPassword(null)}
+          onSubmit={resolvePendingPdfPassword}
+          request={pendingPdfPasswordRequest}
+        />
+      ) : null}
+
+      {isProtectedExportChoiceOpen ? (
+        <ProtectedPdfExportDialog
+          onCancel={() => resolveProtectedExportChoice(null)}
+          onChoose={resolveProtectedExportChoice}
         />
       ) : null}
 

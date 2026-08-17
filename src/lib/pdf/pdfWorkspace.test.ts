@@ -13,6 +13,7 @@ import {
   moveSelectedPages,
   recordAnnotationMove,
   rotatePages,
+  togglePageBookmark,
   updateAnnotation,
 } from './pdfWorkspace';
 import {
@@ -81,6 +82,7 @@ function createWorkspace({
     id: 'workspace-test',
     name: 'Merged document',
     documents: [alphaDocument, betaDocument, gammaDocument],
+    bookmarkedPageIds: [],
     pages,
     selectedPageIds,
     activePageId,
@@ -197,6 +199,40 @@ describe('pdfWorkspace page rearranging', () => {
     expect(visiblePageIds(restoredWorkspace)).toEqual(['alpha-1', 'alpha-2', 'beta-1', 'beta-2']);
     expect(restoredWorkspace.activePageId).toBe('beta-1');
     expect(restoredWorkspace.selectedPageIds).toEqual(['alpha-2', 'beta-1']);
+  });
+});
+
+describe('pdfWorkspace page bookmarks', () => {
+  it('toggles bookmarks only for visible workspace pages', () => {
+    const workspace = createMergedWorkspace();
+    const bookmarkedWorkspace = togglePageBookmark(workspace, 'beta-1');
+
+    expect(bookmarkedWorkspace.bookmarkedPageIds).toEqual(['beta-1']);
+    expect(togglePageBookmark(bookmarkedWorkspace, 'beta-1').bookmarkedPageIds).toEqual([]);
+    expect(togglePageBookmark(workspace, 'missing-page')).toBe(workspace);
+
+    const workspaceWithDeletedPage = createWorkspace({
+      pageSpecs: [
+        { id: 'alpha-1', document: alphaDocument, sourcePageIndex: 0 },
+        { id: 'alpha-2', document: alphaDocument, sourcePageIndex: 1, deleted: true },
+      ],
+    });
+
+    expect(togglePageBookmark(workspaceWithDeletedPage, 'alpha-2')).toBe(workspaceWithDeletedPage);
+  });
+
+  it('keeps bookmarks through reordering and removes them with deleted pages', () => {
+    const workspace: PdfWorkspace = {
+      ...createMergedWorkspace(),
+      bookmarkedPageIds: ['alpha-2', 'beta-1'],
+    };
+    const movedWorkspace = movePage(workspace, 'beta-1', 'alpha-1');
+
+    expect(movedWorkspace.bookmarkedPageIds).toEqual(['alpha-2', 'beta-1']);
+
+    const deletedWorkspace = deletePages(movedWorkspace, ['alpha-2']);
+
+    expect(deletedWorkspace.bookmarkedPageIds).toEqual(['beta-1']);
   });
 });
 

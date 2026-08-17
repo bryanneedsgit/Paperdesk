@@ -169,6 +169,7 @@ export function createEmptyWorkspace(name = 'Untitled workspace'): PdfWorkspace 
     name,
     documents: [],
     pages: [],
+    bookmarkedPageIds: [],
     selectedPageIds: [],
     formatterSettings: createDefaultFormatterSettings(),
     formFieldValues: {},
@@ -233,6 +234,7 @@ export function createWorkspaceFromDocuments(documents: PdfDocumentSource[]): Pd
     name: createWorkspaceName(documents),
     documents,
     pages,
+    bookmarkedPageIds: [],
     selectedPageIds: activePageId ? [activePageId] : [],
     activePageId,
     formatterSettings: createDefaultFormatterSettings(),
@@ -420,6 +422,25 @@ export function updateActivePage(workspace: PdfWorkspace, pageId: PdfPageId): Pd
   };
 }
 
+export function togglePageBookmark(workspace: PdfWorkspace, pageId: PdfPageId): PdfWorkspace {
+  if (!workspace.pages.some((page) => page.id === pageId && !page.deleted)) {
+    return workspace;
+  }
+
+  const bookmarkedPageIds = new Set(workspace.bookmarkedPageIds);
+
+  if (bookmarkedPageIds.has(pageId)) {
+    bookmarkedPageIds.delete(pageId);
+  } else {
+    bookmarkedPageIds.add(pageId);
+  }
+
+  return {
+    ...workspace,
+    bookmarkedPageIds: Array.from(bookmarkedPageIds),
+  };
+}
+
 export function updateSelectedPages(
   workspace: PdfWorkspace,
   selectedPageIds: PdfPageId[],
@@ -491,6 +512,7 @@ export function deletePages(workspace: PdfWorkspace, pageIds: PdfPageId[]): PdfW
     ...workspace,
     pages,
     activePageId: nextActivePage?.id,
+    bookmarkedPageIds: workspace.bookmarkedPageIds.filter((pageId) => !deletedPageIds.has(pageId)),
     selectedPageIds: nextActivePage ? [nextActivePage.id] : [],
   };
 }

@@ -84,9 +84,8 @@ export function classifyPdfOpenError(error: unknown): FriendlyError {
     return {
       code: 'password-protected',
       developerMessage: text,
-      suggestion: 'Remove the password in another PDF app, then open the unlocked copy.',
-      userMessage:
-        'This PDF appears to be password-protected. Password support is not available yet.',
+      suggestion: 'Check the password and try again, or save an unlocked copy in another PDF app.',
+      userMessage: 'This password-protected PDF could not be unlocked.',
     };
   }
 
@@ -94,8 +93,8 @@ export function classifyPdfOpenError(error: unknown): FriendlyError {
     return {
       code: 'encrypted-pdf',
       developerMessage: text,
-      suggestion: 'Try exporting an unencrypted copy from the original PDF app.',
-      userMessage: 'This PDF appears to be encrypted and cannot be opened here yet.',
+      suggestion: 'Try saving a modern password-protected or unlocked copy in another PDF app.',
+      userMessage: 'This PDF uses encryption that Paperdesk could not unlock.',
     };
   }
 
@@ -197,9 +196,8 @@ export function classifyPdfExportError(error: unknown): FriendlyError {
     return {
       code: includesAny(text, ['password']) ? 'password-protected' : 'encrypted-pdf',
       developerMessage: text,
-      suggestion: 'Export an unlocked copy from the original PDF app, then try again.',
-      userMessage:
-        'This PDF appears to be password-protected or encrypted and cannot be exported here yet.',
+      suggestion: 'Try exporting an unlocked copy, then protect it again from the Document panel.',
+      userMessage: 'Paperdesk could not apply this PDF’s password protection.',
     };
   }
 

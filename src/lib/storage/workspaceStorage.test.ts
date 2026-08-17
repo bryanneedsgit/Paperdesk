@@ -69,11 +69,15 @@ describe('workspaceStorage', () => {
   });
 
   it('stores autosave metadata without original PDF bytes or thumbnails', () => {
-    const document = createDocument('doc-1', 'source.pdf', [1, 2]);
+    const document = {
+      ...createDocument('doc-1', 'source.pdf', [1, 2]),
+      security: { wasEncrypted: true as const },
+    };
     const workspace: PdfWorkspace = {
       id: 'workspace-1',
       name: 'Recovered workspace',
       documents: [document],
+      bookmarkedPageIds: ['page-1'],
       pages: [
         {
           id: 'page-1',
@@ -111,12 +115,14 @@ describe('workspaceStorage', () => {
     const snapshot = createAutosavedWorkspaceSnapshot(workspace);
 
     expect('bytes' in snapshot.workspace.documents[0]).toBe(false);
+    expect(snapshot.workspace.documents[0].security).toEqual({ wasEncrypted: true });
     expect(snapshot.workspace.pages[0].thumbnailDataUrl).toBeUndefined();
     expect(snapshot.workspace.pages[0]).toMatchObject({
       id: 'page-1',
       rotation: 90,
       deleted: false,
     });
+    expect(snapshot.workspace.bookmarkedPageIds).toEqual(['page-1']);
     expect(snapshot.workspace.formFieldValues[document.id].Name).toBe('Ada');
     expect(snapshot.workspace.annotations[0]).toMatchObject({
       id: 'annotation-1',
@@ -134,6 +140,7 @@ describe('workspaceStorage', () => {
       id: 'workspace-1',
       name: 'Recovered workspace',
       documents: [originalDocument],
+      bookmarkedPageIds: ['page-1'],
       pages: [
         {
           id: 'page-1',
@@ -154,6 +161,7 @@ describe('workspaceStorage', () => {
     };
 
     const snapshot = createAutosavedWorkspaceSnapshot(workspace);
+    snapshot.workspace.bookmarkedPageIds = ['page-1', 'missing-page', 'page-1'];
     const recoveredWorkspace = createWorkspaceFromAutosave(snapshot, [reloadedDocument]);
 
     expect(recoveredWorkspace.documents[0].bytes).toBe(reloadedDocument.bytes);
@@ -161,6 +169,39 @@ describe('workspaceStorage', () => {
       id: 'page-1',
       sourceDocumentId: originalDocument.id,
     });
+    expect(recoveredWorkspace.bookmarkedPageIds).toEqual(['page-1']);
+  });
+
+  it('loads legacy autosaves without bookmark metadata', () => {
+    const document = createDocument('doc-legacy', 'legacy.pdf', [1]);
+    const workspace: PdfWorkspace = {
+      activePageId: 'page-legacy',
+      annotations: [],
+      bookmarkedPageIds: [],
+      documents: [document],
+      formFieldValues: {},
+      formSettings: createDefaultFormSettings(),
+      formatterSettings: createDefaultFormatterSettings(),
+      id: 'workspace-legacy',
+      name: 'Legacy workspace',
+      pages: [
+        {
+          deleted: false,
+          displayIndex: 1,
+          id: 'page-legacy',
+          rotation: 0,
+          sourceDocumentId: document.id,
+          sourceFileName: document.fileName,
+          sourcePageIndex: 0,
+        },
+      ],
+      selectedPageIds: ['page-legacy'],
+    };
+    const snapshot = createAutosavedWorkspaceSnapshot(workspace);
+
+    delete (snapshot.workspace as { bookmarkedPageIds?: string[] }).bookmarkedPageIds;
+
+    expect(createWorkspaceFromAutosave(snapshot, [document]).bookmarkedPageIds).toEqual([]);
   });
 
   it('stores source PDF bytes separately for seamless recovery', async () => {
@@ -174,6 +215,7 @@ describe('workspaceStorage', () => {
       id: 'workspace-1',
       name: 'Recovered workspace',
       documents: [document],
+      bookmarkedPageIds: [],
       pages: [],
       selectedPageIds: [],
       activePageId: undefined,
@@ -191,5 +233,37 @@ describe('workspaceStorage', () => {
     expect(Array.from(new Uint8Array(cachedDocument?.bytes ?? new ArrayBuffer(0)))).toEqual([
       1, 2, 3,
     ]);
+  });
+
+  it('never caches decrypted bytes from password-protected sources', async () => {
+    if (!window.indexedDB) {
+      expect(window.indexedDB).toBeUndefined();
+      return;
+    }
+
+    const document = createDocument('doc-protected', 'protected.pdf', [1, 2, 3]);
+    const workspace: PdfWorkspace = {
+      id: 'workspace-protected',
+      name: 'Protected workspace',
+      documents: [document],
+      bookmarkedPageIds: [],
+      pages: [],
+      selectedPageIds: [],
+      activePageId: undefined,
+      formatterSettings: createDefaultFormatterSettings(),
+      formFieldValues: {},
+      formSettings: createDefaultFormSettings(),
+      annotations: [],
+    };
+
+    await writeAutosavedWorkspaceSources(workspace);
+    expect(await readAutosavedWorkspaceSource(document.id)).not.toBeNull();
+
+    await writeAutosavedWorkspaceSources({
+      ...workspace,
+      documents: [{ ...document, security: { wasEncrypted: true } }],
+    });
+
+    expect(await readAutosavedWorkspaceSource(document.id)).toBeNull();
   });
 });

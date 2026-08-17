@@ -20,6 +20,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   ArrowDown,
   ArrowUp,
+  Bookmark,
   GripVertical,
   PanelLeftClose,
   PanelLeftOpen,
@@ -39,8 +40,10 @@ import type {
   PdfRotationDirection,
   PdfWorkspace,
 } from '../../lib/pdf/types';
+import { BookmarksList } from './BookmarksList';
 
 type DropPosition = 'before' | 'after';
+type SidebarView = 'bookmarks' | 'pages';
 
 type ThumbnailContextMenu = {
   pageId: PdfPageId;
@@ -59,6 +62,7 @@ type ThumbnailSidebarProps = {
   onSelectPage: (pageId: PdfPageId) => void;
   onSetSelectedPages: (pageIds: PdfPageId[]) => void;
   onThumbnailRendered: (pageId: PdfPageId, thumbnailDataUrl: string) => void;
+  onTogglePageBookmark: (pageId: PdfPageId) => void;
   onTogglePageSelection: (pageId: PdfPageId, selected: boolean) => void;
   onToggleCollapsed: () => void;
   selectedPageIds: PdfPageId[];
@@ -426,11 +430,13 @@ export function ThumbnailSidebar({
   onSelectPage,
   onSetSelectedPages,
   onThumbnailRendered,
+  onTogglePageBookmark,
   onTogglePageSelection,
   onToggleCollapsed,
   selectedPageIds,
   workspace,
 }: ThumbnailSidebarProps) {
+  const [activeView, setActiveView] = useState<SidebarView>('pages');
   const [draggedPageId, setDraggedPageId] = useState<PdfPageId | null>(null);
   const [dropTargetPageId, setDropTargetPageId] = useState<PdfPageId | null>(null);
   const [contextMenu, setContextMenu] = useState<ThumbnailContextMenu | null>(null);
@@ -440,6 +446,11 @@ export function ThumbnailSidebar({
   );
   const pageIds = useMemo(() => pages.map((page) => page.id), [pages]);
   const selectedPageIdSet = useMemo(() => new Set(selectedPageIds), [selectedPageIds]);
+  const bookmarkedPageCount = useMemo(() => {
+    const bookmarkedPageIds = new Set(workspace?.bookmarkedPageIds ?? []);
+
+    return pages.reduce((count, page) => count + (bookmarkedPageIds.has(page.id) ? 1 : 0), 0);
+  }, [pages, workspace?.bookmarkedPageIds]);
   const showSourceLabels = (workspace?.documents.length ?? 0) > 1;
   const documentsById = useMemo(() => {
     return new Map(workspace?.documents.map((document) => [document.id, document]) ?? []);
@@ -574,7 +585,7 @@ export function ThumbnailSidebar({
   return (
     <aside
       className="thumbnail-sidebar"
-      aria-label="Page thumbnails"
+      aria-label="Pages and bookmarks"
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
           event.preventDefault();
@@ -591,43 +602,82 @@ export function ThumbnailSidebar({
     >
       <div className="panel-header thumbnail-panel-header">
         <div>
-          <h2>Pages</h2>
-          {selectedPageIds.length ? (
+          <h2>{activeView === 'pages' ? 'Pages' : 'Bookmarks'}</h2>
+          {activeView === 'pages' && selectedPageIds.length ? (
             <span className="selection-count">{selectedPageIds.length} selected</span>
           ) : null}
         </div>
         <button
-          aria-label="Collapse page thumbnails"
+          aria-label="Collapse page navigation"
           className="panel-icon-button"
           onClick={onToggleCollapsed}
-          title="Collapse page thumbnails"
+          title="Collapse page navigation"
           type="button"
         >
           <PanelLeftClose size={16} />
         </button>
       </div>
 
-      <div className="thumbnail-selection-toolbar">
+      <div className="sidebar-view-tabs" aria-label="Page navigation views" role="group">
         <button
-          className="sidebar-action-button destructive"
-          disabled={!selectedPageIds.length}
-          onClick={() => onDeletePages(selectedPageIds)}
+          aria-pressed={activeView === 'pages'}
+          onClick={() => setActiveView('pages')}
           type="button"
         >
-          <Trash2 size={14} />
-          <span>{deleteLabel}</span>
+          Pages
         </button>
         <button
-          className="sidebar-action-button"
-          disabled={!selectedPageIds.length}
-          onClick={onClearSelection}
+          aria-pressed={activeView === 'bookmarks'}
+          onClick={() => setActiveView('bookmarks')}
           type="button"
         >
-          Clear
+          <Bookmark aria-hidden="true" size={14} />
+          <span>Bookmarks</span>
+          <span className="sidebar-view-count">{bookmarkedPageCount}</span>
         </button>
       </div>
 
-      {workspace && pages.length ? (
+      {activeView === 'pages' ? (
+        <div className="thumbnail-selection-toolbar">
+          <button
+            className="sidebar-action-button destructive"
+            disabled={!selectedPageIds.length}
+            onClick={() => onDeletePages(selectedPageIds)}
+            type="button"
+          >
+            <Trash2 size={14} />
+            <span>{deleteLabel}</span>
+          </button>
+          <button
+            className="sidebar-action-button"
+            disabled={!selectedPageIds.length}
+            onClick={onClearSelection}
+            type="button"
+          >
+            Clear
+          </button>
+        </div>
+      ) : (
+        <div className="bookmark-sidebar-summary">
+          {bookmarkedPageCount === 1 ? '1 saved page' : `${bookmarkedPageCount} saved pages`}
+        </div>
+      )}
+
+      {activeView === 'bookmarks' && workspace ? (
+        <div className="thumbnail-sidebar-view">
+          <BookmarksList
+            onActivatePage={onActivatePage}
+            onRemoveBookmark={onTogglePageBookmark}
+            workspace={workspace}
+          />
+        </div>
+      ) : activeView === 'bookmarks' ? (
+        <div className="bookmarks-empty-state">
+          <Bookmark aria-hidden="true" size={22} />
+          <strong>No bookmarked pages</strong>
+          <span>Open a PDF to start bookmarking pages.</span>
+        </div>
+      ) : workspace && pages.length ? (
         <DndContext
           collisionDetection={closestCenter}
           onDragCancel={handleDragCancel}
@@ -736,14 +786,14 @@ export function CollapsedThumbnailSidebar({
 }) {
   return (
     <aside
-      aria-label="Collapsed page thumbnails"
+      aria-label="Collapsed page navigation"
       className="thumbnail-sidebar thumbnail-sidebar-collapsed"
     >
       <button
-        aria-label="Expand page thumbnails"
+        aria-label="Expand page navigation"
         className="panel-icon-button"
         onClick={onToggleCollapsed}
-        title="Expand page thumbnails"
+        title="Expand page navigation"
         type="button"
       >
         <PanelLeftOpen size={16} />
