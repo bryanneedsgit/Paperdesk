@@ -833,6 +833,7 @@ function createSubsetWorkspace(workspace: PdfWorkspace, pageIds: PdfPageId[]): P
   return {
     ...workspace,
     pages,
+    bookmarkedPageIds: workspace.bookmarkedPageIds.filter((pageId) => pageIdSet.has(pageId)),
     selectedPageIds: pages.map((page) => page.id),
     activePageId: pages[0]?.id,
   };

@@ -38,6 +38,7 @@ function createSearchableWorkspace(): PdfWorkspace {
   return {
     id: 'workspace-search',
     name: 'searchable.pdf',
+    bookmarkedPageIds: [],
     documents: [
       {
         id: 'document-search',

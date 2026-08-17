@@ -55,14 +55,19 @@ export const featureGuideSections: FeatureGuideSection[] = [
   {
     id: 'pages',
     title: 'Pages',
-    summary: 'Select, reorder, delete, rotate, and navigate document pages from the viewer.',
+    summary:
+      'Scan, bookmark, reorder, delete, rotate, and navigate document pages from the viewer.',
     steps: [
       'Use the left thumbnail sidebar to select pages.',
+      'Open Page overview beside the page controls to scan the active PDF in a scrollable four-column thumbnail grid.',
+      'Bookmark the active page from the viewer toolbar, then open Bookmarks in the sidebar to jump back to it.',
       'Drag thumbnails to reorder pages before export.',
       'Rotate or delete selected pages from the sidebar or viewer toolbar.',
     ],
     tips: [
       'The page number field jumps directly to a page.',
+      'Bookmarked thumbnails show a filled Saved badge in Page overview, where bookmarks can also be toggled.',
+      'Bookmarks are saved with workspace autosave and follow pages when they are reordered.',
       'Undo is available for major page edits.',
     ],
     screenshots: [

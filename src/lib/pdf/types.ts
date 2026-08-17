@@ -199,6 +199,7 @@ export type PdfWorkspace = {
   name: string;
   documents: PdfDocumentSource[];
   pages: PdfPageItem[];
+  bookmarkedPageIds: PdfPageId[];
   selectedPageIds: PdfPageId[];
   activePageId?: PdfPageId;
   formatterSettings: PdfFormatterSettings;

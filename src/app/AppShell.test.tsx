@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PdfDocumentSource } from '../lib/pdf/types';
+import type { PdfDocumentSource, PdfPageId, PdfWorkspace } from '../lib/pdf/types';
 import type { PdfLoadOptions } from '../lib/pdf/pdfLoader';
 import { AppShell } from './AppShell';
 
@@ -68,6 +68,31 @@ vi.mock('../components/pdf/DocumentViewer', () => ({
   DocumentViewer: () => <div data-testid="document-viewer" />,
 }));
 
+vi.mock('../components/pdf/PageOverview', () => ({
+  PageOverview: ({
+    onActivatePage,
+    onClose,
+    workspace,
+  }: {
+    onActivatePage: (pageId: PdfPageId) => void;
+    onClose: () => void;
+    workspace: PdfWorkspace;
+  }) => (
+    <section aria-label={`Page overview for ${workspace.name}`}>
+      <span>{workspace.name}</span>
+      <button
+        onClick={() => {
+          onActivatePage(workspace.pages[0].id);
+          onClose();
+        }}
+        type="button"
+      >
+        Open first overview page
+      </button>
+    </section>
+  ),
+}));
+
 vi.mock('../components/sidebar/ThumbnailSidebar', () => ({
   CollapsedThumbnailSidebar: () => null,
   ThumbnailSidebar: () => null,
@@ -78,7 +103,38 @@ vi.mock('../components/layout/ToolsPanel', () => ({
 }));
 
 vi.mock('../components/toolbar/ViewerToolbar', () => ({
-  ViewerToolbar: () => null,
+  ViewerToolbar: ({
+    isActivePageBookmarked,
+    isPageOverviewOpen,
+    onToggleActivePageBookmark,
+    onTogglePageOverview,
+  }: {
+    isActivePageBookmarked: boolean;
+    isPageOverviewOpen: boolean;
+    onToggleActivePageBookmark: () => void;
+    onTogglePageOverview: () => void;
+  }) => (
+    <div>
+      <button
+        aria-label={
+          isActivePageBookmarked ? 'Remove current page bookmark' : 'Bookmark current page'
+        }
+        aria-pressed={isActivePageBookmarked}
+        onClick={onToggleActivePageBookmark}
+        type="button"
+      >
+        Bookmark
+      </button>
+      <button
+        aria-label={isPageOverviewOpen ? 'Close current PDF overview' : 'Open current PDF overview'}
+        aria-pressed={isPageOverviewOpen}
+        onClick={onTogglePageOverview}
+        type="button"
+      >
+        Overview
+      </button>
+    </div>
+  ),
 }));
 
 function createDocument(id: string, fileName: string, filePath: string): PdfDocumentSource {
@@ -214,6 +270,90 @@ describe('AppShell PDF opening', () => {
       expect(protectPdfBytes).toHaveBeenCalledWith(new Uint8Array([2]), 'correct password'),
     );
     expect(saveWorkspacePdfBytes).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles a bookmark for the active page from the viewer toolbar', async () => {
+    const document = createDocument('pdf-bookmark', 'bookmark.pdf', '/tmp/bookmark.pdf');
+    const secondDocument = createDocument('pdf-second', 'second.pdf', '/tmp/second.pdf');
+
+    pickPdfPath
+      .mockResolvedValueOnce(document.filePath)
+      .mockResolvedValueOnce(secondDocument.filePath);
+    loadPdfDocumentsFromPaths
+      .mockResolvedValueOnce([document])
+      .mockResolvedValueOnce([secondDocument]);
+
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+
+    await screen.findByRole('tab', { name: /bookmark\.pdf/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bookmark current page' }));
+
+    expect(
+      screen
+        .getByRole('button', { name: 'Remove current page bookmark' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(screen.getByRole('status').textContent).toContain('Bookmarked page 1.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
+
+    await screen.findByRole('tab', { name: /second\.pdf/ });
+    expect(
+      screen.getByRole('button', { name: 'Bookmark current page' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+
+    fireEvent.click(screen.getByRole('tab', { name: /bookmark\.pdf/ }));
+    expect(
+      screen
+        .getByRole('button', { name: 'Remove current page bookmark' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove current page bookmark' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Bookmark current page' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+  });
+
+  it('keeps the page overview scoped to the active PDF workspace', async () => {
+    const firstDocument = createDocument('pdf-first', 'first.pdf', '/tmp/first.pdf');
+    const secondDocument = createDocument('pdf-second', 'second.pdf', '/tmp/second.pdf');
+
+    pickPdfPath
+      .mockResolvedValueOnce(firstDocument.filePath)
+      .mockResolvedValueOnce(secondDocument.filePath);
+    loadPdfDocumentsFromPaths
+      .mockResolvedValueOnce([firstDocument])
+      .mockResolvedValueOnce([secondDocument]);
+
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    await screen.findByRole('tab', { name: /first\.pdf/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
+    await screen.findByRole('tab', { name: /second\.pdf/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open current PDF overview' }));
+    expect(screen.getByRole('region', { name: 'Page overview for second.pdf' })).not.toBeNull();
+    expect(screen.queryByTestId('document-viewer')).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: /first\.pdf/ }));
+
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Page overview/ })).toBeNull());
+    expect(screen.getByTestId('document-viewer')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Open current PDF overview' })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open current PDF overview' }));
+    expect(screen.getByRole('region', { name: 'Page overview for first.pdf' })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open first overview page' }));
+    expect(screen.queryByRole('region', { name: /Page overview/ })).toBeNull();
+    expect(screen.getByTestId('document-viewer')).not.toBeNull();
   });
 
   it('shows failed opens as an auto-dismissing toast instead of permanent viewer content', async () => {

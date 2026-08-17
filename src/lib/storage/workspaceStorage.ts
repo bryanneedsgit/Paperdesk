@@ -172,9 +172,21 @@ export function createWorkspaceFromAutosave(
   documents: PdfDocumentSource[],
 ): PdfWorkspace {
   const documentsById = new Map(documents.map((document) => [document.id, document]));
+  const pages = snapshot.workspace.pages.map((page) => ({ ...page }));
+  const visiblePageIds = new Set(pages.filter((page) => !page.deleted).map((page) => page.id));
+  const bookmarkedPageIds = Array.isArray(snapshot.workspace.bookmarkedPageIds)
+    ? Array.from(
+        new Set(
+          snapshot.workspace.bookmarkedPageIds.filter(
+            (pageId): pageId is string => typeof pageId === 'string' && visiblePageIds.has(pageId),
+          ),
+        ),
+      )
+    : [];
 
   return {
     ...snapshot.workspace,
+    bookmarkedPageIds,
     documents: snapshot.workspace.documents.map((document) => {
       const hydratedDocument = documentsById.get(document.id);
 
@@ -184,7 +196,7 @@ export function createWorkspaceFromAutosave(
 
       return hydratedDocument;
     }),
-    pages: snapshot.workspace.pages.map((page) => ({ ...page })),
+    pages,
   };
 }
 

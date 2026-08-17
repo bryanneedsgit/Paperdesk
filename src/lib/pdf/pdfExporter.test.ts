@@ -94,6 +94,7 @@ function createWorkspace(documents: PdfDocumentSource[]): PdfWorkspace {
     id: 'workspace-export-test',
     name: documents.length === 1 ? documents[0].fileName : 'Merged document',
     documents,
+    bookmarkedPageIds: [],
     pages: pages.map((page, pageIndex) => ({
       ...page,
       displayIndex: pageIndex + 1,

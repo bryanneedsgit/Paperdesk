@@ -18,6 +18,7 @@ import { ToolsPanel, type ToolPanelId } from '../components/layout/ToolsPanel';
 import type { AnnotationFontPatch } from '../components/annotations/AnnotationsPanel';
 import { WorkspaceTabs, type WorkspaceTabItem } from '../components/layout/WorkspaceTabs';
 import { DocumentViewer } from '../components/pdf/DocumentViewer';
+import { PageOverview } from '../components/pdf/PageOverview';
 import {
   CollapsedThumbnailSidebar,
   ThumbnailSidebar,
@@ -90,6 +91,7 @@ import {
   recordAnnotationMove,
   rotatePages,
   selectAllPages,
+  togglePageBookmark,
   updateAnnotation,
   updateWorkspaceFormFieldValue,
   updateWorkspaceFormSettings,
@@ -439,6 +441,7 @@ export function AppShell() {
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanelId>('document');
   const [isToolsPanelCollapsed, setIsToolsPanelCollapsed] = useState(false);
   const [isThumbnailSidebarCollapsed, setIsThumbnailSidebarCollapsed] = useState(false);
+  const [isPageOverviewOpen, setIsPageOverviewOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isHandToolActive, setIsHandToolActive] = useState(false);
@@ -544,6 +547,10 @@ export function AppShell() {
   }, [visiblePages, workspace?.activePageId]);
 
   const activePageNumber = activePageIndex >= 0 ? activePageIndex + 1 : 0;
+  const activePage = activePageIndex >= 0 ? visiblePages[activePageIndex] : undefined;
+  const isActivePageBookmarked = Boolean(
+    activePage && workspace?.bookmarkedPageIds.includes(activePage.id),
+  );
   const pageCount = visiblePages.length;
   const zoomPercent = workspace ? Math.round(workspace.formatterSettings.zoom * 100) : 100;
   const isLoadingPdf = isOpeningPdf || isAddingPdfs;
@@ -580,6 +587,16 @@ export function AppShell() {
       setIsStatusZoomOpen(false);
     }
   }, [pageCount, workspace]);
+
+  useEffect(() => {
+    setIsPageOverviewOpen(false);
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (pageCount === 0) {
+      setIsPageOverviewOpen(false);
+    }
+  }, [pageCount]);
 
   const findStatus = !workspace
     ? 'Open a PDF'
@@ -828,6 +845,48 @@ export function AppShell() {
       message,
       tone: 'info',
     });
+  }, []);
+
+  const handleTogglePageBookmark = useCallback(
+    (pageId: PdfPageId) => {
+      const currentWorkspace = workspaceRef.current;
+      const page = currentWorkspace?.pages.find(
+        (candidatePage) => candidatePage.id === pageId && !candidatePage.deleted,
+      );
+
+      if (!currentWorkspace || !page) {
+        return;
+      }
+
+      const isBookmarked = currentWorkspace.bookmarkedPageIds.includes(pageId);
+
+      updatePresentWorkspace((currentWorkspace) => togglePageBookmark(currentWorkspace, pageId));
+      showToast(
+        isBookmarked
+          ? `Removed bookmark from page ${page.displayIndex}.`
+          : `Bookmarked page ${page.displayIndex}.`,
+        'success',
+      );
+    },
+    [showToast, updatePresentWorkspace],
+  );
+
+  const handleToggleActivePageBookmark = useCallback(() => {
+    if (activePage) {
+      handleTogglePageBookmark(activePage.id);
+    }
+  }, [activePage, handleTogglePageBookmark]);
+
+  const handleTogglePageOverview = useCallback(() => {
+    if (!activeWorkspaceId || pageCount === 0) {
+      return;
+    }
+
+    setIsPageOverviewOpen((currentValue) => !currentValue);
+  }, [activeWorkspaceId, pageCount]);
+
+  const closePageOverview = useCallback(() => {
+    setIsPageOverviewOpen(false);
   }, []);
 
   const resolvePendingPdfPassword = useCallback((password: string | null) => {
@@ -2825,6 +2884,8 @@ export function AppShell() {
         isAnnotating={isAnnotating}
         isFindOpen={isFindOpen}
         isHandToolActive={isHandToolActive}
+        isActivePageBookmarked={isActivePageBookmarked}
+        isPageOverviewOpen={isPageOverviewOpen}
         onChangeFindQuery={setFindQuery}
         onCloseFind={closeFindBar}
         onFindNext={goToNextFindResult}
@@ -2836,7 +2897,9 @@ export function AppShell() {
         onRotateRight={handleRotateSelectedPagesRight}
         onSelectAnnotationTool={handleSelectAnnotationTool}
         onToggleAnnotating={handleToggleAnnotating}
+        onToggleActivePageBookmark={handleToggleActivePageBookmark}
         onToggleHandTool={handleToggleHandTool}
+        onTogglePageOverview={handleTogglePageOverview}
         pageCount={pageCount}
         selectedAnnotationTool={selectedAnnotationTool}
         workspace={workspace}
@@ -2863,44 +2926,55 @@ export function AppShell() {
             onSetSelectedPages={selectPages}
             onThumbnailRendered={handleThumbnailRendered}
             onToggleCollapsed={handleToggleThumbnailSidebar}
+            onTogglePageBookmark={handleTogglePageBookmark}
             onTogglePageSelection={togglePageSelection}
             selectedPageIds={selectedVisiblePageIds}
             workspace={workspace}
           />
         )}
-        <DocumentViewer
-          activeAnnotationTool={selectedAnnotationTool}
-          annotationBorderColor={annotationBorderColor}
-          annotationColor={annotationColor}
-          annotationFillColor={annotationFillColor}
-          annotationStrokeWidth={annotationStrokeWidth}
-          canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
-          canGoPrevious={activePageIndex > 0}
-          isHandToolActive={isHandToolActive}
-          isAnnotating={isAnnotating}
-          isLoading={isLoadingPdf}
-          loadingMessage={loadingMessage}
-          eraserSize={eraserSize}
-          freehandSensitivity={freehandSensitivity}
-          highlightBrushSize={highlightBrushSize}
-          highlightOpacity={highlightOpacity}
-          onChangeFormFieldValue={handleChangeFormFieldValue}
-          onCommitAnnotationChange={handleCommitAnnotationChange}
-          onCreateAnnotation={handleCreateAnnotation}
-          onEraseAnnotationPixels={handleEraseAnnotationPixels}
-          onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
-          onSelectAnnotation={setSelectedAnnotationId}
-          onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
-          onUpdateAnnotation={handleUpdateAnnotation}
-          onWheelZoom={handleWheelZoom}
-          onZoomByFactor={handleZoomByFactor}
-          selectedAnnotationId={selectedAnnotationId}
-          spacebarFreehandEnabled={isSpacebarFreehandEnabled}
-          signatureImage={signatureImage}
-          textSearchActiveResult={findResults[findActiveIndex] ?? null}
-          textSearchQuery={isFindOpen ? findQuery : ''}
-          workspace={workspace}
-        />
+        {isPageOverviewOpen && workspace ? (
+          <PageOverview
+            onActivatePage={activatePage}
+            onClose={closePageOverview}
+            onThumbnailRendered={handleThumbnailRendered}
+            onTogglePageBookmark={handleTogglePageBookmark}
+            workspace={workspace}
+          />
+        ) : (
+          <DocumentViewer
+            activeAnnotationTool={selectedAnnotationTool}
+            annotationBorderColor={annotationBorderColor}
+            annotationColor={annotationColor}
+            annotationFillColor={annotationFillColor}
+            annotationStrokeWidth={annotationStrokeWidth}
+            canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
+            canGoPrevious={activePageIndex > 0}
+            isHandToolActive={isHandToolActive}
+            isAnnotating={isAnnotating}
+            isLoading={isLoadingPdf}
+            loadingMessage={loadingMessage}
+            eraserSize={eraserSize}
+            freehandSensitivity={freehandSensitivity}
+            highlightBrushSize={highlightBrushSize}
+            highlightOpacity={highlightOpacity}
+            onChangeFormFieldValue={handleChangeFormFieldValue}
+            onCommitAnnotationChange={handleCommitAnnotationChange}
+            onCreateAnnotation={handleCreateAnnotation}
+            onEraseAnnotationPixels={handleEraseAnnotationPixels}
+            onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
+            onSelectAnnotation={setSelectedAnnotationId}
+            onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
+            onUpdateAnnotation={handleUpdateAnnotation}
+            onWheelZoom={handleWheelZoom}
+            onZoomByFactor={handleZoomByFactor}
+            selectedAnnotationId={selectedAnnotationId}
+            spacebarFreehandEnabled={isSpacebarFreehandEnabled}
+            signatureImage={signatureImage}
+            textSearchActiveResult={findResults[findActiveIndex] ?? null}
+            textSearchQuery={isFindOpen ? findQuery : ''}
+            workspace={workspace}
+          />
+        )}
         <ToolsPanel
           activePanel={activeToolPanel}
           annotationBorderColor={annotationBorderColor}

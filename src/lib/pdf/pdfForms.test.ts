@@ -45,6 +45,7 @@ function createWorkspace(sourceDocument: PdfDocumentSource): PdfWorkspace {
     id: 'forms-workspace',
     name: sourceDocument.fileName,
     documents: [sourceDocument],
+    bookmarkedPageIds: [],
     pages: [page],
     selectedPageIds: [page.id],
     activePageId: page.id,
