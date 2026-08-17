@@ -163,19 +163,45 @@ pub fn protect_pdf_bytes(bytes: Vec<u8>, password: String) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::dictionary;
 
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../sample1.pdf");
+    fn sample_pdf() -> Vec<u8> {
+        let mut document = Document::with_version("1.5");
+        let pages_id = document.new_object_id();
+        let page_id = document.add_object(lopdf::dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+
+        document.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+
+        serialize_document(&mut document).unwrap()
+    }
 
     #[test]
     fn leaves_unprotected_pdfs_unchanged() {
-        let result = prepare_pdf_for_open_impl(SAMPLE_PDF, None).unwrap();
+        let result = prepare_pdf_for_open_impl(&sample_pdf(), None).unwrap();
 
         assert!(matches!(result, PdfOpenSecurityOutcome::Unprotected));
     }
 
     #[test]
     fn protects_and_unlocks_a_pdf_with_a_user_password() {
-        let protected = protect_pdf_bytes_impl(SAMPLE_PDF, "correct horse".to_string()).unwrap();
+        let sample_pdf = sample_pdf();
+        let protected = protect_pdf_bytes_impl(&sample_pdf, "correct horse".to_string()).unwrap();
         let encrypted = Document::load_mem(&protected).unwrap();
         let encryption_dictionary = encrypted.get_encrypted().unwrap();
 
@@ -203,7 +229,7 @@ mod tests {
             panic!("expected unlocked PDF bytes");
         };
 
-        let original = Document::load_mem(SAMPLE_PDF).unwrap();
+        let original = Document::load_mem(&sample_pdf).unwrap();
         let unlocked = Document::load_mem(&bytes).unwrap();
 
         assert!(!unlocked.is_encrypted());
@@ -212,7 +238,9 @@ mod tests {
 
     #[test]
     fn rejects_empty_and_oversized_protection_passwords() {
-        assert!(protect_pdf_bytes_impl(SAMPLE_PDF, String::new()).is_err());
-        assert!(protect_pdf_bytes_impl(SAMPLE_PDF, "x".repeat(128)).is_err());
+        let sample_pdf = sample_pdf();
+
+        assert!(protect_pdf_bytes_impl(&sample_pdf, String::new()).is_err());
+        assert!(protect_pdf_bytes_impl(&sample_pdf, "x".repeat(128)).is_err());
     }
 }
