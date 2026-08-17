@@ -68,6 +68,9 @@ export type PdfDocumentSource = {
   pageCount: number;
   loadedAt: string;
   formFields?: PdfFormField[];
+  security?: {
+    wasEncrypted: true;
+  };
 };
 
 export type DocumentModel = PdfDocumentSource;

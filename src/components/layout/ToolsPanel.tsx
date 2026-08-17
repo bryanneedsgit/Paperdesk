@@ -1,6 +1,8 @@
 import {
   FilePlus2,
   ListChecks,
+  LockKeyhole,
+  LockOpen,
   PanelRightClose,
   PanelRightOpen,
   PenLine,
@@ -37,6 +39,7 @@ type ToolsPanelProps = {
   annotationBorderColor: string;
   isCollapsed: boolean;
   isAddingPdfs: boolean;
+  isPdfSecurityBusy: boolean;
   onAddPdfs: () => void;
   annotationColor: string;
   annotationFillColor: string;
@@ -82,10 +85,12 @@ type ToolsPanelProps = {
   onDeleteAnnotation: (annotationId: PdfAnnotationId) => void;
   onInsertBlankPage: () => void;
   onInsertCoverPage: () => void;
+  onLockPdf: () => void;
   onImportFormData: (formData: PdfFormDataJson) => void;
   onOpenRecentFile: (filePath: string) => void;
   onPasteFreehandAnnotation: () => void;
   onSetSignatureImage: (signatureImage: SignatureImage) => void;
+  onSaveUnlockedPdf: () => void;
   onToggleCollapsed: () => void;
   recentFiles: RecentPdfFile[];
   selectedAnnotationId: PdfAnnotationId | null;
@@ -97,7 +102,14 @@ type ToolsPanelProps = {
 
 type DocumentPanelProps = Pick<
   ToolsPanelProps,
-  'isAddingPdfs' | 'onAddPdfs' | 'onOpenRecentFile' | 'recentFiles' | 'workspace'
+  | 'isAddingPdfs'
+  | 'isPdfSecurityBusy'
+  | 'onAddPdfs'
+  | 'onLockPdf'
+  | 'onOpenRecentFile'
+  | 'onSaveUnlockedPdf'
+  | 'recentFiles'
+  | 'workspace'
 >;
 
 const toolPanels: Array<{
@@ -113,12 +125,17 @@ const toolPanels: Array<{
 
 function DocumentPanel({
   isAddingPdfs,
+  isPdfSecurityBusy,
   onAddPdfs,
+  onLockPdf,
   onOpenRecentFile,
+  onSaveUnlockedPdf,
   recentFiles,
   workspace,
 }: DocumentPanelProps) {
   const includedPageCounts = workspace ? getIncludedPageCountByDocument(workspace) : new Map();
+  const protectedDocumentCount =
+    workspace?.documents.filter((document) => document.security?.wasEncrypted).length ?? 0;
 
   return (
     <div className="tool-stack document-panel">
@@ -143,8 +160,19 @@ function DocumentPanel({
 
               return (
                 <div className="source-list-item" key={document.id} role="listitem">
-                  <span className="source-file-name" title={document.fileName}>
-                    {document.fileName}
+                  <span className="source-file-heading">
+                    {document.security?.wasEncrypted ? (
+                      <span
+                        aria-label="Password-protected source"
+                        className="source-security-icon"
+                        title="Opened from a password-protected PDF"
+                      >
+                        <LockKeyhole size={12} />
+                      </span>
+                    ) : null}
+                    <span className="source-file-name" title={document.fileName}>
+                      {document.fileName}
+                    </span>
                   </span>
                   <span className="source-file-meta">
                     {includedPageCount} included / {document.pageCount} total
@@ -156,6 +184,48 @@ function DocumentPanel({
         ) : (
           <p className="source-list-empty">Open or add PDFs to begin.</p>
         )}
+      </section>
+
+      <section className="tool-section" aria-labelledby="document-security-title">
+        <div className="document-security-summary">
+          <h3 id="document-security-title">Protection</h3>
+          <span
+            className="document-security-status"
+            data-protected={protectedDocumentCount > 0 ? 'true' : undefined}
+          >
+            {protectedDocumentCount > 0 ? <LockKeyhole size={13} /> : <LockOpen size={13} />}
+            {protectedDocumentCount > 0
+              ? `${protectedDocumentCount} protected ${protectedDocumentCount === 1 ? 'source' : 'sources'}`
+              : 'No password'}
+          </span>
+        </div>
+        <p className="document-security-copy">
+          {protectedDocumentCount > 0
+            ? 'Protected sources are unlocked only for this session. Export can keep or remove protection.'
+            : 'Create an AES-256 encrypted copy that requires a password to open.'}
+        </p>
+        <div className="document-security-actions">
+          <button
+            className="secondary-action-button"
+            disabled={!workspace || isPdfSecurityBusy}
+            onClick={onLockPdf}
+            type="button"
+          >
+            <LockKeyhole size={14} />
+            <span>{isPdfSecurityBusy ? 'Working...' : 'Lock PDF copy'}</span>
+          </button>
+          {protectedDocumentCount > 0 ? (
+            <button
+              className="secondary-action-button"
+              disabled={!workspace || isPdfSecurityBusy}
+              onClick={onSaveUnlockedPdf}
+              type="button"
+            >
+              <LockOpen size={14} />
+              <span>Save unlocked copy</span>
+            </button>
+          ) : null}
+        </div>
       </section>
 
       {recentFiles.length ? (
@@ -192,6 +262,7 @@ export function ToolsPanel({
   highlightOpacity,
   isCollapsed,
   isAddingPdfs,
+  isPdfSecurityBusy,
   onAddPdfs,
   onChangeAnnotationBorderColor,
   onChangeAnnotationColor,
@@ -215,10 +286,12 @@ export function ToolsPanel({
   onDeleteAnnotation,
   onInsertBlankPage,
   onInsertCoverPage,
+  onLockPdf,
   onImportFormData,
   onOpenRecentFile,
   onPasteFreehandAnnotation,
   onSetSignatureImage,
+  onSaveUnlockedPdf,
   onToggleCollapsed,
   recentFiles,
   selectedAnnotationId,
@@ -270,8 +343,11 @@ export function ToolsPanel({
           {activePanel === 'document' ? (
             <DocumentPanel
               isAddingPdfs={isAddingPdfs}
+              isPdfSecurityBusy={isPdfSecurityBusy}
               onAddPdfs={onAddPdfs}
+              onLockPdf={onLockPdf}
               onOpenRecentFile={onOpenRecentFile}
+              onSaveUnlockedPdf={onSaveUnlockedPdf}
               recentFiles={recentFiles}
               workspace={workspace}
             />

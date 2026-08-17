@@ -106,7 +106,6 @@ function createDocumentViewerProps(
     annotationStrokeWidth: 3,
     canGoNext: false,
     canGoPrevious: false,
-    error: null,
     eraserSize: 18,
     freehandSensitivity: 'medium',
     highlightBrushSize: 14,

@@ -69,7 +69,10 @@ describe('workspaceStorage', () => {
   });
 
   it('stores autosave metadata without original PDF bytes or thumbnails', () => {
-    const document = createDocument('doc-1', 'source.pdf', [1, 2]);
+    const document = {
+      ...createDocument('doc-1', 'source.pdf', [1, 2]),
+      security: { wasEncrypted: true as const },
+    };
     const workspace: PdfWorkspace = {
       id: 'workspace-1',
       name: 'Recovered workspace',
@@ -111,6 +114,7 @@ describe('workspaceStorage', () => {
     const snapshot = createAutosavedWorkspaceSnapshot(workspace);
 
     expect('bytes' in snapshot.workspace.documents[0]).toBe(false);
+    expect(snapshot.workspace.documents[0].security).toEqual({ wasEncrypted: true });
     expect(snapshot.workspace.pages[0].thumbnailDataUrl).toBeUndefined();
     expect(snapshot.workspace.pages[0]).toMatchObject({
       id: 'page-1',
@@ -191,5 +195,36 @@ describe('workspaceStorage', () => {
     expect(Array.from(new Uint8Array(cachedDocument?.bytes ?? new ArrayBuffer(0)))).toEqual([
       1, 2, 3,
     ]);
+  });
+
+  it('never caches decrypted bytes from password-protected sources', async () => {
+    if (!window.indexedDB) {
+      expect(window.indexedDB).toBeUndefined();
+      return;
+    }
+
+    const document = createDocument('doc-protected', 'protected.pdf', [1, 2, 3]);
+    const workspace: PdfWorkspace = {
+      id: 'workspace-protected',
+      name: 'Protected workspace',
+      documents: [document],
+      pages: [],
+      selectedPageIds: [],
+      activePageId: undefined,
+      formatterSettings: createDefaultFormatterSettings(),
+      formFieldValues: {},
+      formSettings: createDefaultFormSettings(),
+      annotations: [],
+    };
+
+    await writeAutosavedWorkspaceSources(workspace);
+    expect(await readAutosavedWorkspaceSource(document.id)).not.toBeNull();
+
+    await writeAutosavedWorkspaceSources({
+      ...workspace,
+      documents: [{ ...document, security: { wasEncrypted: true } }],
+    });
+
+    expect(await readAutosavedWorkspaceSource(document.id)).toBeNull();
   });
 });

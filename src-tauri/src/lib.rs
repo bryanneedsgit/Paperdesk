@@ -6,6 +6,10 @@ use std::{
 
 use tauri::{Emitter, Manager, State};
 
+mod pdf_security;
+
+use pdf_security::{prepare_pdf_for_open, protect_pdf_bytes};
+
 const OPEN_PDFS_EVENT: &str = "paperdesk://open-pdfs";
 
 struct PendingOpenPaths(Mutex<Vec<String>>);
@@ -149,7 +153,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             drain_pending_open_paths,
-            read_pdf_file_bytes
+            prepare_pdf_for_open,
+            protect_pdf_bytes,
+            read_pdf_file_bytes,
         ])
         .setup(move |app| {
             allow_pdf_paths(app.handle(), &startup_pdf_paths);

@@ -11,6 +11,12 @@ import { getFileNameFromPath } from '../utils/fileNames';
 import { classifyPdfOpenError, logDeveloperError } from '../utils/errors';
 import { ensurePdfJsWorker, pdfjsLib } from './pdfJs';
 import { detectPdfFormFields } from './pdfForms';
+import {
+  PdfPasswordCancelledError,
+  PdfSecurityError,
+  preparePdfBytesForOpen,
+  type PdfPasswordProvider,
+} from './pdfSecurity';
 import type { PdfDocumentSource } from './types';
 
 const pdfFileFilters = [{ name: 'PDF', extensions: ['pdf'] }];
@@ -27,6 +33,11 @@ export class PdfLoadError extends Error {
     this.name = 'PdfLoadError';
   }
 }
+
+export type PdfLoadOptions = {
+  onPasswordAccepted?: (password: string) => void;
+  requestPassword?: PdfPasswordProvider;
+};
 
 export async function pickPdfPath(defaultPath?: string): Promise<string | null> {
   const selectedPath = await open({
@@ -112,12 +123,16 @@ export async function getPdfPageCount(bytes: Uint8Array): Promise<number> {
   }
 }
 
-export async function loadPdfFromPath(path: string): Promise<PdfDocumentSource> {
+export async function loadPdfFromPath(
+  path: string,
+  options: PdfLoadOptions = {},
+): Promise<PdfDocumentSource> {
   const bytes = await readPdfFile(path);
   return loadPdfFromBytes({
     bytes,
     fileName: getFileNameFromPath(path),
     filePath: path,
+    ...options,
   });
 }
 
@@ -125,34 +140,68 @@ export async function loadPdfFromBytes({
   bytes,
   fileName,
   filePath,
+  onPasswordAccepted,
+  requestPassword,
 }: {
   bytes: Uint8Array;
   fileName: string;
   filePath?: string;
-}): Promise<PdfDocumentSource> {
-  const pageCount = await getPdfPageCount(bytes);
-  const formFields = await detectPdfFormFields(bytes).catch((error) => {
+} & PdfLoadOptions): Promise<PdfDocumentSource> {
+  let preparedBytes: Awaited<ReturnType<typeof preparePdfBytesForOpen>>;
+
+  try {
+    preparedBytes = await preparePdfBytesForOpen({ bytes, fileName, requestPassword });
+  } catch (error) {
+    if (error instanceof PdfPasswordCancelledError) {
+      throw error;
+    }
+
+    if (error instanceof PdfSecurityError) {
+      throw new PdfLoadError(error.message, error.userMessage, error, error.suggestion);
+    }
+
+    const friendlyError = classifyPdfOpenError(error);
+    throw new PdfLoadError(
+      'Unable to inspect PDF security.',
+      friendlyError.userMessage,
+      error,
+      friendlyError.suggestion,
+    );
+  }
+
+  const pageCount = await getPdfPageCount(preparedBytes.bytes);
+  const formFields = await detectPdfFormFields(preparedBytes.bytes).catch((error) => {
     logDeveloperError(`Unable to inspect form fields: ${fileName}`, error);
     return [];
   });
 
+  if (preparedBytes.wasEncrypted) {
+    onPasswordAccepted?.(preparedBytes.password ?? '');
+  }
+
+  const id = createId('pdf');
+
   return {
-    id: createId('pdf'),
+    id,
     fileName,
     filePath,
-    bytes,
+    bytes: preparedBytes.bytes,
     pageCount,
     loadedAt: new Date().toISOString(),
     formFields,
+    security: preparedBytes.wasEncrypted ? { wasEncrypted: true } : undefined,
   };
 }
 
-export async function loadPdfDocumentsFromPaths(paths: string[]): Promise<PdfDocumentSource[]> {
+export async function loadPdfDocumentsFromPaths(
+  paths: string[],
+  options: PdfLoadOptions = {},
+): Promise<PdfDocumentSource[]> {
   const documents: PdfDocumentSource[] = [];
 
   for (const path of paths) {
     try {
-      documents.push(await loadPdfFromPath(path));
+      documents.push(await loadPdfFromPath(path, options));
     } catch (error) {
       if (error instanceof PdfLoadError) {
         throw new PdfLoadError(
@@ -170,24 +219,26 @@ export async function loadPdfDocumentsFromPaths(paths: string[]): Promise<PdfDoc
   return documents;
 }
 
-export async function openPdfDocument(): Promise<PdfDocumentSource | null> {
+export async function openPdfDocument(
+  options: PdfLoadOptions = {},
+): Promise<PdfDocumentSource | null> {
   const path = await pickPdfPath();
 
   if (!path) {
     return null;
   }
 
-  return loadPdfFromPath(path);
+  return loadPdfFromPath(path, options);
 }
 
-export async function openPdfDocuments(): Promise<PdfDocumentSource[]> {
+export async function openPdfDocuments(options: PdfLoadOptions = {}): Promise<PdfDocumentSource[]> {
   const paths = await pickPdfPaths();
 
   if (paths.length === 0) {
     return [];
   }
 
-  return loadPdfDocumentsFromPaths(paths);
+  return loadPdfDocumentsFromPaths(paths, options);
 }
 
 export function getPdfLoadErrorMessage(error: unknown): string {

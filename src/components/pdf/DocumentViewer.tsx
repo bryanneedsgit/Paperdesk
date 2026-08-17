@@ -30,7 +30,6 @@ type DocumentViewerProps = {
   annotationStrokeWidth: number;
   canGoNext: boolean;
   canGoPrevious: boolean;
-  error: string | null;
   eraserSize: number;
   freehandSensitivity: FreehandSensitivity;
   highlightBrushSize: number;
@@ -179,15 +178,6 @@ function releaseViewerPointerCapture(viewer: HTMLElement, pointerId: number) {
   }
 }
 
-function PdfOpenError({ error }: { error: string }) {
-  return (
-    <div className="workspace-error" role="alert">
-      <h2>Could not open PDF</h2>
-      <p>{error}</p>
-    </div>
-  );
-}
-
 export function DocumentViewer({
   activeAnnotationTool,
   annotationBorderColor,
@@ -196,7 +186,6 @@ export function DocumentViewer({
   annotationStrokeWidth,
   canGoNext,
   canGoPrevious,
-  error,
   eraserSize,
   freehandSensitivity,
   highlightBrushSize,
@@ -705,7 +694,6 @@ export function DocumentViewer({
         onWheel={handleWheel}
         ref={viewerRef}
       >
-        {error ? <PdfOpenError error={error} /> : null}
         <PdfViewer
           activeAnnotationTool={activeAnnotationTool}
           annotationBorderColor={annotationBorderColor}
@@ -737,7 +725,6 @@ export function DocumentViewer({
 
   return (
     <section className="document-viewer" aria-label="Main document viewer" ref={viewerRef}>
-      {error ? <PdfOpenError error={error} /> : null}
       <EmptyWorkspace />
     </section>
   );

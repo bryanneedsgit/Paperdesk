@@ -17,6 +17,7 @@ The app is designed for local page-level PDF workflows. It does not upload PDFs 
 ## Features
 
 - Open local PDFs without uploading or syncing files.
+- Open supported password-protected PDFs with session-only passwords.
 - Merge multiple PDFs into one editable workspace.
 - View all merged pages in one thumbnail board with source filenames.
 - Select, delete, rearrange, and rotate pages before export.
@@ -25,6 +26,7 @@ The app is designed for local page-level PDF workflows. It does not upload PDFs 
 - Add exportable text, highlight, shape, pen, and signature annotations.
 - Undo and redo major workspace edits.
 - Export the final edited workspace as a new local PDF.
+- Save unlocked copies or create password-protected AES-256 copies.
 
 ## Usage Guide
 
@@ -37,11 +39,12 @@ For a user-facing feature directory, see [guide/README.md](guide/README.md).
 5. Use **Forms** to fill supported fields when a PDF includes AcroForm fields.
 6. Use **Annotations** and the annotation toolbar to add notes, text, highlights, shapes, pen marks, or signatures.
 7. Use **Export** to save a new final PDF. The original source PDFs are left unchanged unless you explicitly confirm overwriting one of them.
+8. Use **Protection** in the Document panel to save a locked or unlocked copy. Exports from protected workspaces ask whether to keep protection.
 
 ## Requirements
 
 - Node.js 18 or newer
-- Rust and Cargo
+- Rust 1.85 or newer and Cargo
 - Tauri platform prerequisites for your OS
 
 For desktop bundles:
@@ -169,7 +172,7 @@ The signing script uses `signtool.exe` from the Windows SDK and signs with SHA-2
 
 - No OCR. Scanned/image-only PDFs are not converted into searchable or editable text.
 - No automatic paragraph reflow. Paperdesk focuses on page-level editing, overlays, forms, and export.
-- Some encrypted or password-protected PDFs are unsupported.
+- Some legacy or nonstandard PDF encryption schemes are unsupported.
 - Some advanced PDF form field types may be unsupported and left unchanged.
 
 ## Privacy
@@ -181,7 +184,8 @@ Paperdesk is designed to keep PDF work local to your device.
 - No OCR is performed.
 - No cloud sync is built in.
 - Recent files and autosave metadata can be disabled in Settings.
-- Autosave stores workspace metadata only by default, not original PDF bytes.
+- Autosave may keep local recovery copies of unprotected sources; it never caches decrypted protected sources.
+- Passwords and decrypted bytes from protected sources are kept in memory only and are not written to autosave storage.
 
 ## Merge Workflow
 
