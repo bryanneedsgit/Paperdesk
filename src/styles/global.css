@@ -1715,6 +1715,53 @@ button:focus-visible {
   display: inline;
 }
 
+.page-overview-header-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.page-overview-filter {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: flex;
+  padding: 2px;
+}
+
+.page-overview-filter button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 5px;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.page-overview-filter button:hover:not([aria-pressed='true']) {
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  color: var(--color-text);
+}
+
+.page-overview-filter button[aria-pressed='true'] {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  box-shadow: 0 1px 2px rgb(23 33 43 / 8%);
+  color: var(--color-accent-strong);
+}
+
+.page-overview-filter svg {
+  flex: 0 0 auto;
+}
+
 .page-overview-scroll {
   min-height: 0;
   overflow: auto;
@@ -1899,6 +1946,10 @@ button:focus-visible {
 
 .page-overview-empty-state span {
   font-size: 12px;
+}
+
+.page-overview-empty-action {
+  margin-top: 3px;
 }
 
 .empty-workspace {
