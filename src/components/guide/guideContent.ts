@@ -66,6 +66,7 @@ export const featureGuideSections: FeatureGuideSection[] = [
     ],
     tips: [
       'The page number field jumps directly to a page.',
+      'Use the All pages and Bookmarked filters in Page overview to scan the full PDF or only saved pages.',
       'Bookmarked thumbnails show a filled Saved badge in Page overview, where bookmarks can also be toggled.',
       'Bookmarks are saved with workspace autosave and follow pages when they are reordered.',
       'Undo is available for major page edits.',

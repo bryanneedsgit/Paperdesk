@@ -1,7 +1,8 @@
-import { Bookmark, LayoutGrid, X } from 'lucide-react';
+import { Bookmark, LayoutGrid, NotebookPen, X } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 
 import { renderPdfThumbnailToDataUrl } from '../../lib/pdf/pdfRenderer';
+import { hasPageNoteContent } from '../../lib/notes/pageNotes';
 import { isGeneratedPageItem, isSourcePageItem } from '../../lib/pdf/pdfWorkspace';
 import type { PdfDocumentSource, PdfPageId, PdfPageItem, PdfWorkspace } from '../../lib/pdf/types';
 
@@ -49,6 +50,8 @@ type PageOverviewProps = {
   onTogglePageBookmark: (pageId: PdfPageId) => void;
   workspace: PdfWorkspace;
 };
+
+type OverviewPageFilter = 'all' | 'bookmarked';
 
 type OverviewPageThumbnailProps = {
   onThumbnailRendered: (pageId: PdfPageId, thumbnailDataUrl: string) => void;
@@ -195,6 +198,7 @@ const OverviewPageThumbnail = memo(function OverviewPageThumbnail({
 type OverviewPageCardProps = {
   isActive: boolean;
   isBookmarked: boolean;
+  isNoted: boolean;
   onActivatePage: (pageId: PdfPageId) => void;
   onClose: () => void;
   onThumbnailRendered: (pageId: PdfPageId, thumbnailDataUrl: string) => void;
@@ -208,6 +212,7 @@ type OverviewPageCardProps = {
 const OverviewPageCard = memo(function OverviewPageCard({
   isActive,
   isBookmarked,
+  isNoted,
   onActivatePage,
   onClose,
   onThumbnailRendered,
@@ -260,7 +265,18 @@ const OverviewPageCard = memo(function OverviewPageCard({
         {isActive ? <span className="page-overview-current-badge">Current</span> : null}
       </div>
       <div className="page-overview-card-meta">
-        <strong>Page {pageNumber}</strong>
+        <strong>
+          Page {pageNumber}
+          {isNoted ? (
+            <span
+              aria-label={`Page ${pageNumber} has notes`}
+              className="page-overview-note-indicator"
+              title="Has page notes"
+            >
+              <NotebookPen aria-hidden="true" size={12} />
+            </span>
+          ) : null}
+        </strong>
         {showSourceLabel ? <span title={sourceLabel}>{sourceLabel}</span> : null}
       </div>
     </article>
@@ -275,19 +291,26 @@ export function PageOverview({
   workspace,
 }: PageOverviewProps) {
   const overviewRef = useRef<HTMLElement | null>(null);
+  const [pageFilter, setPageFilter] = useState<OverviewPageFilter>('all');
   const pages = useMemo(() => workspace.pages.filter((page) => !page.deleted), [workspace.pages]);
   const bookmarkedPageIds = useMemo(
     () => new Set(workspace.bookmarkedPageIds),
     [workspace.bookmarkedPageIds],
   );
+  const numberedPages = useMemo(
+    () => pages.map((page, pageIndex) => ({ page, pageNumber: pageIndex + 1 })),
+    [pages],
+  );
+  const bookmarkedPages = useMemo(
+    () => numberedPages.filter(({ page }) => bookmarkedPageIds.has(page.id)),
+    [bookmarkedPageIds, numberedPages],
+  );
+  const filteredPages = pageFilter === 'bookmarked' ? bookmarkedPages : numberedPages;
   const documentsById = useMemo(
     () => new Map(workspace.documents.map((document) => [document.id, document])),
     [workspace.documents],
   );
-  const bookmarkedPageCount = pages.reduce(
-    (count, page) => count + (bookmarkedPageIds.has(page.id) ? 1 : 0),
-    0,
-  );
+  const bookmarkedPageCount = bookmarkedPages.length;
   const showSourceLabels = workspace.documents.length > 1;
 
   useEffect(() => {
@@ -332,42 +355,79 @@ export function PageOverview({
             </p>
           </div>
         </div>
-        <button
-          aria-label="Close page overview"
-          className="viewer-icon-button"
-          onClick={onClose}
-          title="Close page overview"
-          type="button"
-        >
-          <X size={16} />
-        </button>
+        <div className="page-overview-header-actions">
+          <div aria-label="Filter page overview" className="page-overview-filter" role="group">
+            <button
+              aria-pressed={pageFilter === 'all'}
+              onClick={() => setPageFilter('all')}
+              type="button"
+            >
+              All pages
+            </button>
+            <button
+              aria-pressed={pageFilter === 'bookmarked'}
+              onClick={() => setPageFilter('bookmarked')}
+              type="button"
+            >
+              <Bookmark aria-hidden="true" size={13} />
+              Bookmarked
+            </button>
+          </div>
+          <button
+            aria-label="Close page overview"
+            className="viewer-icon-button"
+            onClick={onClose}
+            title="Close page overview"
+            type="button"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </header>
 
       <div className="page-overview-scroll">
-        {pages.length ? (
+        {filteredPages.length ? (
           <div
-            aria-label={`${workspace.name} pages`}
+            aria-label={
+              pageFilter === 'bookmarked'
+                ? `Bookmarked pages in ${workspace.name}`
+                : `${workspace.name} pages`
+            }
             className="page-overview-grid"
             data-column-count="4"
             role="list"
           >
-            {pages.map((page, pageIndex) => (
+            {filteredPages.map(({ page, pageNumber }) => (
               <OverviewPageCard
                 isActive={workspace.activePageId === page.id}
                 isBookmarked={bookmarkedPageIds.has(page.id)}
+                isNoted={hasPageNoteContent(workspace.pageNotes?.[page.id])}
                 key={page.id}
                 onActivatePage={onActivatePage}
                 onClose={onClose}
                 onThumbnailRendered={onThumbnailRendered}
                 onTogglePageBookmark={onTogglePageBookmark}
                 page={page}
-                pageNumber={pageIndex + 1}
+                pageNumber={pageNumber}
                 showSourceLabel={showSourceLabels}
                 sourceDocument={
                   isSourcePageItem(page) ? documentsById.get(page.sourceDocumentId) : undefined
                 }
               />
             ))}
+          </div>
+        ) : pageFilter === 'bookmarked' && pages.length ? (
+          <div className="page-overview-empty-state" role="status">
+            <Bookmark aria-hidden="true" size={24} />
+            <strong>No bookmarked pages</strong>
+            <span>Bookmark a page to keep it within easy reach.</span>
+            <button
+              className="secondary-action-button page-overview-empty-action"
+              onClick={() => setPageFilter('all')}
+              type="button"
+            >
+              Show all pages
+            </button>
           </div>
         ) : (
           <div className="page-overview-empty-state">

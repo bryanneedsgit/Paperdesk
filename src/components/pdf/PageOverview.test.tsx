@@ -131,6 +131,60 @@ describe('PageOverview', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('filters the overview to bookmarked pages without changing their page numbers', () => {
+    render(
+      <PageOverview
+        onActivatePage={vi.fn()}
+        onClose={vi.fn()}
+        onThumbnailRendered={vi.fn()}
+        onTogglePageBookmark={vi.fn()}
+        workspace={createGeneratedWorkspace()}
+      />,
+    );
+
+    const allPagesButton = screen.getByRole('button', { name: 'All pages' });
+    const bookmarkedButton = screen.getByRole('button', { name: 'Bookmarked' });
+
+    expect(allPagesButton.getAttribute('aria-pressed')).toBe('true');
+    expect(bookmarkedButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(bookmarkedButton);
+
+    expect(bookmarkedButton.getAttribute('aria-pressed')).toBe('true');
+    expect(
+      screen.getByRole('list', { name: 'Bookmarked pages in Lecture notes.pdf' }),
+    ).not.toBeNull();
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Open page 2' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open page 1' })).toBeNull();
+
+    fireEvent.click(allPagesButton);
+    expect(screen.getAllByRole('listitem')).toHaveLength(7);
+  });
+
+  it('offers a path back to all pages when there are no bookmarks', () => {
+    const workspace = createGeneratedWorkspace();
+    workspace.bookmarkedPageIds = [];
+
+    render(
+      <PageOverview
+        onActivatePage={vi.fn()}
+        onClose={vi.fn()}
+        onThumbnailRendered={vi.fn()}
+        onTogglePageBookmark={vi.fn()}
+        workspace={workspace}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bookmarked' }));
+
+    expect(screen.getByRole('status').textContent).toContain('No bookmarked pages');
+    expect(screen.queryByRole('list')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all pages' }));
+    expect(screen.getByRole('list', { name: 'Lecture notes.pdf pages' })).not.toBeNull();
+  });
+
   it('renders source thumbnails on demand and caches the result in the workspace', async () => {
     const onThumbnailRendered = vi.fn();
     renderPdfThumbnailToDataUrl.mockResolvedValueOnce({

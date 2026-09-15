@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -19,6 +27,8 @@ import type { AnnotationFontPatch } from '../components/annotations/AnnotationsP
 import { WorkspaceTabs, type WorkspaceTabItem } from '../components/layout/WorkspaceTabs';
 import { DocumentViewer } from '../components/pdf/DocumentViewer';
 import { PageOverview } from '../components/pdf/PageOverview';
+import { PageNotesPanel } from '../components/notes/PageNotesPanel';
+import { ExportDeckNotesDialog } from '../components/notes/ExportDeckNotesDialog';
 import {
   CollapsedThumbnailSidebar,
   ThumbnailSidebar,
@@ -132,6 +142,8 @@ import {
   type WorkspaceStorageSettings,
 } from '../lib/storage/workspaceStorage';
 import { getFriendlyErrorSuggestion, logDeveloperError } from '../lib/utils/errors';
+import { updatePageNote } from '../lib/notes/pageNotes';
+import type { DeckNotesExportOptions } from '../lib/notes/deckNotesExport';
 import { getFileNameFromPath } from '../lib/utils/fileNames';
 import { createId } from '../lib/utils/ids';
 import type {
@@ -159,6 +171,7 @@ const toastDismissDelayMs = 4000;
 const toastActionDismissDelayMs = 6500;
 const themeStorageKey = 'paperdesk.theme.v1';
 const openPdfsEventName = 'paperdesk://open-pdfs';
+const pageNotesUiStorageKey = 'paperdesk.pageNotesUi.v1';
 const workspaceTabColors = ['#2f5f73', '#7c3aed', '#b45309', '#047857', '#be123c', '#4f46e5'];
 const defaultWorkspaceTabFont = 'Montserrat, var(--font-ui)';
 
@@ -176,6 +189,12 @@ type SignatureImage = {
 };
 
 type AppTheme = 'system' | 'light' | 'dark';
+
+type PageNotesUiState = {
+  height: number;
+  isFocusMode: boolean;
+  isOpen: boolean;
+};
 
 type WorkspaceTab = {
   color?: string;
@@ -206,6 +225,35 @@ function readAppTheme(): AppTheme {
   const value = window.localStorage.getItem(themeStorageKey);
 
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+}
+
+function readPageNotesUiState(): PageNotesUiState {
+  const fallback: PageNotesUiState = { height: 280, isFocusMode: false, isOpen: false };
+
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(pageNotesUiStorageKey) ?? '',
+    ) as Partial<PageNotesUiState>;
+
+    return {
+      height:
+        typeof parsed.height === 'number' && Number.isFinite(parsed.height)
+          ? Math.min(Math.max(parsed.height, 196), 720)
+          : fallback.height,
+      isFocusMode: parsed.isFocusMode === true,
+      isOpen: parsed.isOpen === true,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function writePageNotesUiState(state: PageNotesUiState): void {
+  try {
+    window.localStorage.setItem(pageNotesUiStorageKey, JSON.stringify(state));
+  } catch {
+    // Preferences are optional when storage is disabled or full.
+  }
 }
 
 function getActiveSourceFileName(workspace: PdfWorkspace | null): string {
@@ -410,6 +458,7 @@ async function loadRecoveredDocumentFromCache(
 }
 
 export function AppShell() {
+  const [initialPageNotesUiState] = useState(readPageNotesUiState);
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [storageSettings, setStorageSettings] = useState<WorkspaceStorageSettings>(
@@ -442,6 +491,13 @@ export function AppShell() {
   const [isToolsPanelCollapsed, setIsToolsPanelCollapsed] = useState(false);
   const [isThumbnailSidebarCollapsed, setIsThumbnailSidebarCollapsed] = useState(false);
   const [isPageOverviewOpen, setIsPageOverviewOpen] = useState(false);
+  const [isPageNotesOpen, setIsPageNotesOpen] = useState(initialPageNotesUiState.isOpen);
+  const [isPageNotesFocusMode, setIsPageNotesFocusMode] = useState(
+    initialPageNotesUiState.isFocusMode,
+  );
+  const [pageNotesHeight, setPageNotesHeight] = useState(initialPageNotesUiState.height);
+  const [isDeckNotesExportOpen, setIsDeckNotesExportOpen] = useState(false);
+  const [isExportingDeckNotes, setIsExportingDeckNotes] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isHandToolActive, setIsHandToolActive] = useState(false);
@@ -489,8 +545,10 @@ export function AppShell() {
   const pendingProtectedExportResolverRef = useRef<
     ((choice: ProtectedPdfExportChoice | null) => void) | null
   >(null);
+  const openPdfPathsFromOsRef = useRef<((paths: string[]) => Promise<void>) | null>(null);
   const documentPasswordsRef = useRef<Map<string, string>>(new Map());
   const annotationPasteTargetRef = useRef<PdfAnnotationPasteTarget | null>(null);
+  const workspaceCenterRef = useRef<HTMLElement | null>(null);
   const activeWorkspaceTab = useMemo(
     () =>
       activeWorkspaceId
@@ -551,6 +609,7 @@ export function AppShell() {
   const isActivePageBookmarked = Boolean(
     activePage && workspace?.bookmarkedPageIds.includes(activePage.id),
   );
+  const activePageNote = activePage ? workspace?.pageNotes?.[activePage.id] : undefined;
   const pageCount = visiblePages.length;
   const zoomPercent = workspace ? Math.round(workspace.formatterSettings.zoom * 100) : 100;
   const isLoadingPdf = isOpeningPdf || isAddingPdfs;
@@ -571,6 +630,7 @@ export function AppShell() {
     !pendingPdfImportRequest &&
     !pendingPdfPasswordRequest &&
     !isProtectedExportChoiceOpen &&
+    !isDeckNotesExportOpen &&
     !exportModalMode;
   const selectedAnnotation = useMemo(
     () => workspace?.annotations.find((annotation) => annotation.id === selectedAnnotationId),
@@ -586,10 +646,24 @@ export function AppShell() {
     if (!workspace || pageCount === 0) {
       setIsStatusZoomOpen(false);
     }
+
+    if (workspace && pageCount === 0) {
+      setIsPageNotesOpen(false);
+      setIsPageNotesFocusMode(false);
+    }
   }, [pageCount, workspace]);
 
   useEffect(() => {
+    writePageNotesUiState({
+      height: pageNotesHeight,
+      isFocusMode: isPageNotesFocusMode,
+      isOpen: isPageNotesOpen,
+    });
+  }, [isPageNotesFocusMode, isPageNotesOpen, pageNotesHeight]);
+
+  useEffect(() => {
     setIsPageOverviewOpen(false);
+    setIsDeckNotesExportOpen(false);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -882,12 +956,72 @@ export function AppShell() {
       return;
     }
 
-    setIsPageOverviewOpen((currentValue) => !currentValue);
+    setIsPageOverviewOpen((currentValue) => {
+      const nextValue = !currentValue;
+
+      if (nextValue) {
+        setIsPageNotesOpen(false);
+        setIsPageNotesFocusMode(false);
+      }
+
+      return nextValue;
+    });
   }, [activeWorkspaceId, pageCount]);
 
   const closePageOverview = useCallback(() => {
     setIsPageOverviewOpen(false);
   }, []);
+
+  const handleTogglePageNotes = useCallback(() => {
+    if (!activeWorkspaceId || pageCount === 0) {
+      return;
+    }
+
+    setIsPageNotesOpen((currentValue) => {
+      const nextValue = !currentValue;
+
+      if (nextValue) {
+        setIsPageOverviewOpen(false);
+      } else {
+        setIsPageNotesFocusMode(false);
+      }
+
+      return nextValue;
+    });
+  }, [activeWorkspaceId, pageCount]);
+
+  const closePageNotes = useCallback(() => {
+    setIsPageNotesOpen(false);
+    setIsPageNotesFocusMode(false);
+  }, []);
+
+  const clampPageNotesHeight = useCallback((height: number) => {
+    const centerHeight = workspaceCenterRef.current?.clientHeight ?? 720;
+
+    return Math.min(Math.max(height, 196), Math.max(196, centerHeight - 160));
+  }, []);
+
+  const handlePageNotesResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = pageNotesHeight;
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        setPageNotesHeight(clampPageNotesHeight(startHeight + startY - moveEvent.clientY));
+      };
+      const stopResizing = () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', stopResizing);
+        window.removeEventListener('pointercancel', stopResizing);
+      };
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', stopResizing, { once: true });
+      window.addEventListener('pointercancel', stopResizing, { once: true });
+    },
+    [clampPageNotesHeight, pageNotesHeight],
+  );
 
   const resolvePendingPdfPassword = useCallback((password: string | null) => {
     const resolver = pendingPdfPasswordResolverRef.current;
@@ -1616,6 +1750,50 @@ export function AppShell() {
     }
   }, [requestNewPdfPassword, requestProtectedExportChoice, showErrorToast, showToast, workspace]);
 
+  const handleExportDeckNotes = useCallback(
+    async (options: DeckNotesExportOptions) => {
+      if (!workspace || pageCount === 0) {
+        showToast('Open a deck before exporting notes.', 'error');
+        return;
+      }
+
+      setIsExportingDeckNotes(true);
+      showToast('Preparing deck notes…', 'info');
+
+      try {
+        const { saveDeckNotes } = await import('../lib/notes/deckNotesExporter');
+        const result = await saveDeckNotes(workspace, options);
+
+        if (!result) {
+          setWorkspaceToast(null);
+          return;
+        }
+
+        setIsDeckNotesExportOpen(false);
+        showToast(
+          `Exported notes for ${result.slideCount} ${result.slideCount === 1 ? 'slide' : 'slides'} to ${result.format.toUpperCase()}.`,
+          'success',
+        );
+      } catch (error) {
+        logDeveloperError('Export deck notes failed.', error);
+        const userMessage =
+          error &&
+          typeof error === 'object' &&
+          'name' in error &&
+          error.name === 'DeckNotesExportError' &&
+          'userMessage' in error &&
+          typeof error.userMessage === 'string'
+            ? error.userMessage
+            : 'Paperdesk could not export the deck notes.';
+
+        showErrorToast(userMessage, error);
+      } finally {
+        setIsExportingDeckNotes(false);
+      }
+    },
+    [pageCount, showErrorToast, showToast, workspace],
+  );
+
   const handleLockPdf = useCallback(async () => {
     if (!workspace || !canExportWorkspace(workspace)) {
       showToast('Paperdesk cannot lock an empty document.', 'error');
@@ -1817,6 +1995,10 @@ export function AppShell() {
     },
     [handlePdfPathsWithPrompt],
   );
+
+  useEffect(() => {
+    openPdfPathsFromOsRef.current = handleOpenPdfPathsFromOs;
+  }, [handleOpenPdfPathsFromOs]);
 
   const handleOpenRecentFile = useCallback(
     async (filePath: string) => {
@@ -2719,18 +2901,20 @@ export function AppShell() {
     let isDisposed = false;
 
     const drainPendingOpenPaths = () => {
+      if (isDisposed) {
+        return;
+      }
+
       invoke<string[]>('drain_pending_open_paths')
         .then((paths) => {
-          if (!isDisposed) {
-            void handleOpenPdfPathsFromOs(paths);
+          if (!isDisposed && paths.length > 0) {
+            void openPdfPathsFromOsRef.current?.(paths);
           }
         })
         .catch((error) => {
           logDeveloperError('Unable to drain pending OS-opened PDFs.', error);
         });
     };
-
-    drainPendingOpenPaths();
 
     listen<string[]>(openPdfsEventName, () => {
       drainPendingOpenPaths();
@@ -2742,16 +2926,21 @@ export function AppShell() {
         }
 
         unlisten = nextUnlisten;
+        drainPendingOpenPaths();
       })
       .catch((error) => {
         logDeveloperError('Unable to listen for OS-opened PDFs.', error);
+
+        if (!isDisposed) {
+          drainPendingOpenPaths();
+        }
       });
 
     return () => {
       isDisposed = true;
       unlisten?.();
     };
-  }, [handleOpenPdfPathsFromOs]);
+  }, []);
 
   useEffect(() => {
     const searchWorkspace = workspaceRef.current;
@@ -2886,6 +3075,7 @@ export function AppShell() {
         isHandToolActive={isHandToolActive}
         isActivePageBookmarked={isActivePageBookmarked}
         isPageOverviewOpen={isPageOverviewOpen}
+        isPageNotesOpen={isPageNotesOpen}
         onChangeFindQuery={setFindQuery}
         onCloseFind={closeFindBar}
         onFindNext={goToNextFindResult}
@@ -2900,6 +3090,7 @@ export function AppShell() {
         onToggleActivePageBookmark={handleToggleActivePageBookmark}
         onToggleHandTool={handleToggleHandTool}
         onTogglePageOverview={handleTogglePageOverview}
+        onTogglePageNotes={handleTogglePageNotes}
         pageCount={pageCount}
         selectedAnnotationTool={selectedAnnotationTool}
         workspace={workspace}
@@ -2932,49 +3123,79 @@ export function AppShell() {
             workspace={workspace}
           />
         )}
-        {isPageOverviewOpen && workspace ? (
-          <PageOverview
-            onActivatePage={activatePage}
-            onClose={closePageOverview}
-            onThumbnailRendered={handleThumbnailRendered}
-            onTogglePageBookmark={handleTogglePageBookmark}
-            workspace={workspace}
-          />
-        ) : (
-          <DocumentViewer
-            activeAnnotationTool={selectedAnnotationTool}
-            annotationBorderColor={annotationBorderColor}
-            annotationColor={annotationColor}
-            annotationFillColor={annotationFillColor}
-            annotationStrokeWidth={annotationStrokeWidth}
-            canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
-            canGoPrevious={activePageIndex > 0}
-            isHandToolActive={isHandToolActive}
-            isAnnotating={isAnnotating}
-            isLoading={isLoadingPdf}
-            loadingMessage={loadingMessage}
-            eraserSize={eraserSize}
-            freehandSensitivity={freehandSensitivity}
-            highlightBrushSize={highlightBrushSize}
-            highlightOpacity={highlightOpacity}
-            onChangeFormFieldValue={handleChangeFormFieldValue}
-            onCommitAnnotationChange={handleCommitAnnotationChange}
-            onCreateAnnotation={handleCreateAnnotation}
-            onEraseAnnotationPixels={handleEraseAnnotationPixels}
-            onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
-            onSelectAnnotation={setSelectedAnnotationId}
-            onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
-            onUpdateAnnotation={handleUpdateAnnotation}
-            onWheelZoom={handleWheelZoom}
-            onZoomByFactor={handleZoomByFactor}
-            selectedAnnotationId={selectedAnnotationId}
-            spacebarFreehandEnabled={isSpacebarFreehandEnabled}
-            signatureImage={signatureImage}
-            textSearchActiveResult={findResults[findActiveIndex] ?? null}
-            textSearchQuery={isFindOpen ? findQuery : ''}
-            workspace={workspace}
-          />
-        )}
+        <section
+          className="workspace-center"
+          data-notes-focus={isPageNotesOpen && isPageNotesFocusMode ? 'true' : undefined}
+          data-notes-open={isPageNotesOpen ? 'true' : undefined}
+          ref={workspaceCenterRef}
+          style={{ '--page-notes-height': `${pageNotesHeight}px` } as CSSProperties}
+        >
+          {!isPageNotesFocusMode ? (
+            isPageOverviewOpen && workspace ? (
+              <PageOverview
+                onActivatePage={activatePage}
+                onClose={closePageOverview}
+                onThumbnailRendered={handleThumbnailRendered}
+                onTogglePageBookmark={handleTogglePageBookmark}
+                workspace={workspace}
+              />
+            ) : (
+              <DocumentViewer
+                activeAnnotationTool={selectedAnnotationTool}
+                annotationBorderColor={annotationBorderColor}
+                annotationColor={annotationColor}
+                annotationFillColor={annotationFillColor}
+                annotationStrokeWidth={annotationStrokeWidth}
+                canGoNext={activePageIndex >= 0 && activePageIndex < pageCount - 1}
+                canGoPrevious={activePageIndex > 0}
+                isHandToolActive={isHandToolActive}
+                isAnnotating={isAnnotating}
+                isLoading={isLoadingPdf}
+                loadingMessage={loadingMessage}
+                eraserSize={eraserSize}
+                freehandSensitivity={freehandSensitivity}
+                highlightBrushSize={highlightBrushSize}
+                highlightOpacity={highlightOpacity}
+                onChangeFormFieldValue={handleChangeFormFieldValue}
+                onCommitAnnotationChange={handleCommitAnnotationChange}
+                onCreateAnnotation={handleCreateAnnotation}
+                onEraseAnnotationPixels={handleEraseAnnotationPixels}
+                onNavigatePage={(direction) => selectPageByIndex(activePageIndex + direction)}
+                onSelectAnnotation={setSelectedAnnotationId}
+                onUpdateAnnotationPasteTarget={handleUpdateAnnotationPasteTarget}
+                onUpdateAnnotation={handleUpdateAnnotation}
+                onWheelZoom={handleWheelZoom}
+                onZoomByFactor={handleZoomByFactor}
+                selectedAnnotationId={selectedAnnotationId}
+                spacebarFreehandEnabled={isSpacebarFreehandEnabled}
+                signatureImage={signatureImage}
+                textSearchActiveResult={findResults[findActiveIndex] ?? null}
+                textSearchQuery={isFindOpen ? findQuery : ''}
+                workspace={workspace}
+              />
+            )
+          ) : null}
+          {isPageNotesOpen && workspace && activePage ? (
+            <PageNotesPanel
+              document={activePageNote}
+              isFocusMode={isPageNotesFocusMode}
+              onChange={(noteDocument) => {
+                updatePresentWorkspace((currentWorkspace) =>
+                  updatePageNote(currentWorkspace, activePage.id, noteDocument),
+                );
+              }}
+              onClose={closePageNotes}
+              onExport={() => setIsDeckNotesExportOpen(true)}
+              onResizeBy={(delta) =>
+                setPageNotesHeight((height) => clampPageNotesHeight(height + delta))
+              }
+              onResizeStart={handlePageNotesResizeStart}
+              onToggleFocusMode={() => setIsPageNotesFocusMode((currentValue) => !currentValue)}
+              pageId={activePage.id}
+              pageNumber={activePageNumber}
+            />
+          ) : null}
+        </section>
         <ToolsPanel
           activePanel={activeToolPanel}
           annotationBorderColor={annotationBorderColor}
@@ -3089,6 +3310,19 @@ export function AppShell() {
           onSplitRanges={handleSplitPageRanges}
           pageCount={pageCount}
           selectedPageCount={selectedVisiblePageIds.length}
+        />
+      ) : null}
+
+      {isDeckNotesExportOpen && workspace ? (
+        <ExportDeckNotesDialog
+          isExporting={isExportingDeckNotes}
+          onClose={() => {
+            if (!isExportingDeckNotes) {
+              setIsDeckNotesExportOpen(false);
+            }
+          }}
+          onExport={handleExportDeckNotes}
+          workspace={workspace}
         />
       ) : null}
 

@@ -1,4 +1,5 @@
 import type { PdfDocumentSource, PdfPageItem, PdfWorkspace } from '../pdf/types';
+import { normalizePageNotes } from '../notes/pageNotes';
 
 const workspaceAutosaveKey = 'paperdesk.workspaceAutosave.v1';
 const workspaceStorageSettingsKey = 'paperdesk.storageSettings.v1';
@@ -187,6 +188,7 @@ export function createWorkspaceFromAutosave(
   return {
     ...snapshot.workspace,
     bookmarkedPageIds,
+    pageNotes: normalizePageNotes(snapshot.workspace.pageNotes, visiblePageIds),
     documents: snapshot.workspace.documents.map((document) => {
       const hydratedDocument = documentsById.get(document.id);
 

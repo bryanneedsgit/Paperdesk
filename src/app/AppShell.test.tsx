@@ -7,6 +7,8 @@ import { AppShell } from './AppShell';
 
 const {
   exportWorkspaceToPdfBytes,
+  invoke,
+  listen,
   loadPdfDocumentsFromPaths,
   pickPdfPath,
   protectPdfBytes,
@@ -14,6 +16,8 @@ const {
   saveWorkspacePdfBytes,
 } = vi.hoisted(() => ({
   exportWorkspaceToPdfBytes: vi.fn(),
+  invoke: vi.fn(),
+  listen: vi.fn(),
   loadPdfDocumentsFromPaths: vi.fn(),
   pickPdfPath: vi.fn(),
   protectPdfBytes: vi.fn(),
@@ -22,11 +26,11 @@ const {
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue([]),
+  invoke,
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(() => undefined),
+  listen,
 }));
 
 vi.mock('@tauri-apps/api/webview', () => ({
@@ -106,13 +110,17 @@ vi.mock('../components/toolbar/ViewerToolbar', () => ({
   ViewerToolbar: ({
     isActivePageBookmarked,
     isPageOverviewOpen,
+    isPageNotesOpen,
     onToggleActivePageBookmark,
     onTogglePageOverview,
+    onTogglePageNotes,
   }: {
     isActivePageBookmarked: boolean;
     isPageOverviewOpen: boolean;
+    isPageNotesOpen: boolean;
     onToggleActivePageBookmark: () => void;
     onTogglePageOverview: () => void;
+    onTogglePageNotes: () => void;
   }) => (
     <div>
       <button
@@ -132,6 +140,14 @@ vi.mock('../components/toolbar/ViewerToolbar', () => ({
         type="button"
       >
         Overview
+      </button>
+      <button
+        aria-label={isPageNotesOpen ? 'Close current page notes' : 'Open current page notes'}
+        aria-pressed={isPageNotesOpen}
+        onClick={onTogglePageNotes}
+        type="button"
+      >
+        Notes
       </button>
     </div>
   ),
@@ -162,6 +178,10 @@ describe('AppShell PDF opening', () => {
     );
 
     pickPdfPath.mockReset();
+    invoke.mockReset();
+    invoke.mockResolvedValue([]);
+    listen.mockReset();
+    listen.mockResolvedValue(() => undefined);
     loadPdfDocumentsFromPaths.mockReset();
     saveWorkspacePdf.mockReset();
     saveWorkspacePdf.mockResolvedValue({
@@ -217,6 +237,50 @@ describe('AppShell PDF opening', () => {
     await waitFor(() => expect(loadPdfDocumentsFromPaths).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('tab', { name: /2 pages \/ 2 PDFs/ })).not.toBeNull();
     expect(screen.getAllByRole('tab')).toHaveLength(1);
+  });
+
+  it('drains PDFs opened by the system after the OS listener is ready', async () => {
+    const firstDocument = createDocument('pdf-first', 'first.pdf', '/tmp/first.pdf');
+    const secondDocument = createDocument('pdf-second', 'second.pdf', '/tmp/second.pdf');
+    const pendingSystemPaths: string[] = [];
+    const listenerRegistrations: Array<() => void> = [];
+
+    invoke.mockImplementation(async (command: string) => {
+      if (command !== 'drain_pending_open_paths') {
+        return [];
+      }
+
+      return pendingSystemPaths.splice(0, pendingSystemPaths.length);
+    });
+    listen.mockImplementation(
+      () =>
+        new Promise<() => void>((resolve) => {
+          listenerRegistrations.push(() => resolve(() => undefined));
+        }),
+    );
+    pickPdfPath.mockResolvedValueOnce(firstDocument.filePath);
+    loadPdfDocumentsFromPaths
+      .mockResolvedValueOnce([firstDocument])
+      .mockResolvedValueOnce([secondDocument]);
+
+    render(<AppShell />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    await screen.findByRole('tab', { name: /first\.pdf/ });
+    await waitFor(() => expect(listenerRegistrations.length).toBeGreaterThan(0));
+
+    pendingSystemPaths.push('/tmp/second.pdf');
+    await act(async () => {
+      listenerRegistrations.at(-1)?.();
+      await Promise.resolve();
+    });
+
+    const prompt = await screen.findByRole('dialog', { name: 'Open PDF from system?' });
+
+    expect(prompt.textContent).toContain('second.pdf');
+    expect(loadPdfDocumentsFromPaths).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: /Current workspace/ })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New workspace' })).not.toBeNull();
   });
 
   it('prompts for a protected PDF password before opening the workspace', async () => {
@@ -354,6 +418,33 @@ describe('AppShell PDF opening', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open first overview page' }));
     expect(screen.queryByRole('region', { name: /Page overview/ })).toBeNull();
     expect(screen.getByTestId('document-viewer')).not.toBeNull();
+  });
+
+  it('adds private notes for the active page and opens the deck export interface', async () => {
+    const sourceDocument = createDocument('pdf-notes', 'notes.pdf', '/tmp/notes.pdf');
+
+    pickPdfPath.mockResolvedValueOnce(sourceDocument.filePath);
+    loadPdfDocumentsFromPaths.mockResolvedValueOnce([sourceDocument]);
+
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    await screen.findByRole('tab', { name: /notes\.pdf/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open current page notes' }));
+    const editor = screen.getByRole('textbox', { name: 'Notes for page 1' });
+
+    editor.replaceChildren(document.createTextNode('Remember the customer story.'));
+    fireEvent.input(editor);
+    fireEvent.click(screen.getByRole('button', { name: 'Close page notes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open current page notes' }));
+
+    expect(screen.getByRole('textbox', { name: 'Notes for page 1' }).textContent).toContain(
+      'Remember the customer story.',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Export notes' }));
+
+    expect(screen.getByRole('dialog', { name: 'Export deck notes' })).not.toBeNull();
+    expect(screen.getByText('1 of 1 slides have notes')).not.toBeNull();
   });
 
   it('shows failed opens as an auto-dismissing toast instead of permanent viewer content', async () => {

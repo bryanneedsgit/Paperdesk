@@ -23,6 +23,7 @@ function createProps(overrides: Partial<ViewerToolbarProps> = {}): ViewerToolbar
     isFindOpen: false,
     isHandToolActive: false,
     isPageOverviewOpen: false,
+    isPageNotesOpen: false,
     onChangeFindQuery: vi.fn(),
     onCloseFind: vi.fn(),
     onFindNext: vi.fn(),
@@ -37,6 +38,7 @@ function createProps(overrides: Partial<ViewerToolbarProps> = {}): ViewerToolbar
     onToggleAnnotating: vi.fn(),
     onToggleHandTool: vi.fn(),
     onTogglePageOverview: vi.fn(),
+    onTogglePageNotes: vi.fn(),
     pageCount: 1,
     selectedAnnotationTool: 'select',
     workspace: insertBlankPage(createEmptyWorkspace()),
@@ -82,6 +84,23 @@ describe('ViewerToolbar bookmarks', () => {
 
     expect(
       screen.getByRole('button', { name: 'Close page overview' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('opens and closes notes for the active page', () => {
+    const onTogglePageNotes = vi.fn();
+    const props = createProps({ onTogglePageNotes });
+    const { rerender } = render(<ViewerToolbar {...props} />);
+
+    const openButton = screen.getByRole('button', { name: 'Show notes for page 1' });
+
+    expect(openButton.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(openButton);
+    expect(onTogglePageNotes).toHaveBeenCalledTimes(1);
+
+    rerender(<ViewerToolbar {...props} isPageNotesOpen />);
+    expect(
+      screen.getByRole('button', { name: 'Close page notes' }).getAttribute('aria-pressed'),
     ).toBe('true');
   });
 });

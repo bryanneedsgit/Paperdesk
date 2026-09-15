@@ -110,6 +110,12 @@ describe('workspaceStorage', () => {
           createdAt: '2026-06-22T00:00:01.000Z',
         },
       ],
+      pageNotes: {
+        'page-1': {
+          version: 1,
+          blocks: [{ type: 'paragraph', runs: [{ bold: true, text: 'Speaker note' }] }],
+        },
+      },
     };
 
     const snapshot = createAutosavedWorkspaceSnapshot(workspace);
@@ -128,6 +134,7 @@ describe('workspaceStorage', () => {
       id: 'annotation-1',
       content: 'Local note',
     });
+    expect(snapshot.workspace.pageNotes?.['page-1'].blocks[0].runs[0].text).toBe('Speaker note');
   });
 
   it('rehydrates autosave metadata with locally reloaded source documents', () => {
@@ -158,6 +165,12 @@ describe('workspaceStorage', () => {
       formFieldValues: {},
       formSettings: createDefaultFormSettings(),
       annotations: [],
+      pageNotes: {
+        'page-1': {
+          version: 1,
+          blocks: [{ type: 'paragraph', runs: [{ text: 'Recovered speaker note' }] }],
+        },
+      },
     };
 
     const snapshot = createAutosavedWorkspaceSnapshot(workspace);
@@ -170,6 +183,9 @@ describe('workspaceStorage', () => {
       sourceDocumentId: originalDocument.id,
     });
     expect(recoveredWorkspace.bookmarkedPageIds).toEqual(['page-1']);
+    expect(recoveredWorkspace.pageNotes?.['page-1'].blocks[0].runs[0].text).toBe(
+      'Recovered speaker note',
+    );
   });
 
   it('loads legacy autosaves without bookmark metadata', () => {
