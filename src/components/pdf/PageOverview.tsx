@@ -1,7 +1,8 @@
-import { Bookmark, LayoutGrid, X } from 'lucide-react';
+import { Bookmark, LayoutGrid, NotebookPen, X } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 
 import { renderPdfThumbnailToDataUrl } from '../../lib/pdf/pdfRenderer';
+import { hasPageNoteContent } from '../../lib/notes/pageNotes';
 import { isGeneratedPageItem, isSourcePageItem } from '../../lib/pdf/pdfWorkspace';
 import type { PdfDocumentSource, PdfPageId, PdfPageItem, PdfWorkspace } from '../../lib/pdf/types';
 
@@ -197,6 +198,7 @@ const OverviewPageThumbnail = memo(function OverviewPageThumbnail({
 type OverviewPageCardProps = {
   isActive: boolean;
   isBookmarked: boolean;
+  isNoted: boolean;
   onActivatePage: (pageId: PdfPageId) => void;
   onClose: () => void;
   onThumbnailRendered: (pageId: PdfPageId, thumbnailDataUrl: string) => void;
@@ -210,6 +212,7 @@ type OverviewPageCardProps = {
 const OverviewPageCard = memo(function OverviewPageCard({
   isActive,
   isBookmarked,
+  isNoted,
   onActivatePage,
   onClose,
   onThumbnailRendered,
@@ -262,7 +265,18 @@ const OverviewPageCard = memo(function OverviewPageCard({
         {isActive ? <span className="page-overview-current-badge">Current</span> : null}
       </div>
       <div className="page-overview-card-meta">
-        <strong>Page {pageNumber}</strong>
+        <strong>
+          Page {pageNumber}
+          {isNoted ? (
+            <span
+              aria-label={`Page ${pageNumber} has notes`}
+              className="page-overview-note-indicator"
+              title="Has page notes"
+            >
+              <NotebookPen aria-hidden="true" size={12} />
+            </span>
+          ) : null}
+        </strong>
         {showSourceLabel ? <span title={sourceLabel}>{sourceLabel}</span> : null}
       </div>
     </article>
@@ -387,6 +401,7 @@ export function PageOverview({
               <OverviewPageCard
                 isActive={workspace.activePageId === page.id}
                 isBookmarked={bookmarkedPageIds.has(page.id)}
+                isNoted={hasPageNoteContent(workspace.pageNotes?.[page.id])}
                 key={page.id}
                 onActivatePage={onActivatePage}
                 onClose={onClose}

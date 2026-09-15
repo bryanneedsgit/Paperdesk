@@ -126,6 +126,23 @@ export type GeneratedPageItem = BasePdfPageItem & {
 
 export type PdfPageItem = SourcePdfPageItem | GeneratedPageItem;
 
+export type PageNoteRun = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  href?: string;
+};
+
+export type PageNoteBlock = {
+  type: 'paragraph' | 'bullet' | 'number';
+  runs: PageNoteRun[];
+};
+
+export type PageNoteDocument = {
+  version: 1;
+  blocks: PageNoteBlock[];
+};
+
 export type PdfFormatterSettings = FormatterSettings & {
   zoom: number;
   fitMode: 'page' | 'width' | 'actual-size';
@@ -206,4 +223,6 @@ export type PdfWorkspace = {
   formFieldValues: PdfFormFieldValuesByDocument;
   formSettings: PdfFormSettings;
   annotations: PdfAnnotation[];
+  /** Private Paperdesk metadata. Never written into an exported PDF. */
+  pageNotes?: Record<PdfPageId, PageNoteDocument>;
 };

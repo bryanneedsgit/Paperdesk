@@ -175,6 +175,7 @@ export function createEmptyWorkspace(name = 'Untitled workspace'): PdfWorkspace 
     formFieldValues: {},
     formSettings: createDefaultFormSettings(),
     annotations: [],
+    pageNotes: {},
   };
 }
 
@@ -241,6 +242,7 @@ export function createWorkspaceFromDocuments(documents: PdfDocumentSource[]): Pd
     formFieldValues: {},
     formSettings: createDefaultFormSettings(),
     annotations: [],
+    pageNotes: {},
   };
 }
 
@@ -507,6 +509,9 @@ export function deletePages(workspace: PdfWorkspace, pageIds: PdfPageId[]): PdfW
     deletedPageIds,
     workspace.activePageId,
   );
+  const pageNotes = Object.fromEntries(
+    Object.entries(workspace.pageNotes ?? {}).filter(([pageId]) => !deletedPageIds.has(pageId)),
+  );
 
   return {
     ...workspace,
@@ -514,6 +519,7 @@ export function deletePages(workspace: PdfWorkspace, pageIds: PdfPageId[]): PdfW
     activePageId: nextActivePage?.id,
     bookmarkedPageIds: workspace.bookmarkedPageIds.filter((pageId) => !deletedPageIds.has(pageId)),
     selectedPageIds: nextActivePage ? [nextActivePage.id] : [],
+    pageNotes,
   };
 }
 

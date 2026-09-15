@@ -22,6 +22,7 @@ import {
   ArrowUp,
   Bookmark,
   GripVertical,
+  NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
@@ -32,6 +33,7 @@ import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { renderPdfThumbnailToDataUrl } from '../../lib/pdf/pdfRenderer';
+import { hasPageNoteContent } from '../../lib/notes/pageNotes';
 import { isGeneratedPageItem, isSourcePageItem } from '../../lib/pdf/pdfWorkspace';
 import type {
   PdfDocumentSource,
@@ -76,6 +78,7 @@ type PageThumbnailProps = {
   isActive: boolean;
   isDraggingGroupMember: boolean;
   isDropTarget: boolean;
+  isNoted: boolean;
   isSelected: boolean;
   onActivatePage: (pageId: PdfPageId) => void;
   onDeletePages: (pageIds: PdfPageId[]) => void;
@@ -127,6 +130,7 @@ function PageThumbnail({
   isActive,
   isDraggingGroupMember,
   isDropTarget,
+  isNoted,
   isSelected,
   onActivatePage,
   onDeletePages,
@@ -332,7 +336,18 @@ function PageThumbnail({
       </button>
 
       <div className="thumbnail-page-meta">
-        <span className="thumbnail-page-label">Page {pageNumber}</span>
+        <span className="thumbnail-page-heading">
+          <span className="thumbnail-page-label">Page {pageNumber}</span>
+          {isNoted ? (
+            <span
+              aria-label={`Page ${pageNumber} has notes`}
+              className="thumbnail-note-indicator"
+              title="Has page notes"
+            >
+              <NotebookPen aria-hidden="true" size={12} />
+            </span>
+          ) : null}
+        </span>
         {showSourceLabel ? (
           <span
             className="thumbnail-source-label"
@@ -696,6 +711,7 @@ export function ThumbnailSidebar({
                   isActive={workspace.activePageId === page.id}
                   isDraggingGroupMember={selectedDragPageIds.has(page.id)}
                   isDropTarget={dropTargetPageId === page.id}
+                  isNoted={hasPageNoteContent(workspace.pageNotes?.[page.id])}
                   isSelected={selectedPageIdSet.has(page.id)}
                   key={page.id}
                   onActivatePage={onActivatePage}

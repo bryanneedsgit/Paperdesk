@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Hand,
   LayoutGrid,
+  NotebookPen,
   RotateCcw,
   RotateCw,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ type ViewerToolbarProps = {
   isHandToolActive: boolean;
   isActivePageBookmarked: boolean;
   isPageOverviewOpen: boolean;
+  isPageNotesOpen: boolean;
   onGoNext: () => void;
   onGoPrevious: () => void;
   onChangeFindQuery: (query: string) => void;
@@ -42,6 +44,7 @@ type ViewerToolbarProps = {
   onToggleActivePageBookmark: () => void;
   onToggleHandTool: () => void;
   onTogglePageOverview: () => void;
+  onTogglePageNotes: () => void;
   pageCount: number;
   selectedAnnotationTool: PdfAnnotationTool;
   workspace: PdfWorkspace | null;
@@ -172,6 +175,7 @@ export function ViewerToolbar({
   isHandToolActive,
   isActivePageBookmarked,
   isPageOverviewOpen,
+  isPageNotesOpen,
   onChangeFindQuery,
   onCloseFind,
   onFindNext,
@@ -186,6 +190,7 @@ export function ViewerToolbar({
   onToggleActivePageBookmark,
   onToggleHandTool,
   onTogglePageOverview,
+  onTogglePageNotes,
   pageCount,
   selectedAnnotationTool,
   workspace,
@@ -263,6 +268,14 @@ export function ViewerToolbar({
           onClick={onTogglePageOverview}
         >
           <LayoutGrid size={16} />
+        </IconButton>
+        <IconButton
+          disabled={disabled}
+          isPressed={isPageNotesOpen}
+          label={isPageNotesOpen ? 'Close page notes' : `Show notes for page ${activePageNumber}`}
+          onClick={onTogglePageNotes}
+        >
+          <NotebookPen size={16} />
         </IconButton>
       </div>
 
