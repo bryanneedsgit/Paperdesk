@@ -31,7 +31,7 @@ export function getDeckNotesBaseName(workspace: PdfWorkspace): string {
 
   return (
     printableValue
-      .replace(/\.pdf$/i, '')
+      .replace(/\.(pdf|ppd)$/i, '')
       .replace(/[<>:"/\\|?*]+/g, '-')
       .replace(/\s+/g, ' ')
       .replace(/[ .-]+$/g, '')

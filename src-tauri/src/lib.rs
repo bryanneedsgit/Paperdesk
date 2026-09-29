@@ -7,6 +7,8 @@ use std::{
 use tauri::{Emitter, Manager, State};
 
 mod pdf_security;
+mod ppd_files;
+use ppd_files::{can_write_ppd_file, read_ppd_file_bytes, write_ppd_file_atomic};
 
 use pdf_security::{prepare_pdf_for_open, protect_pdf_bytes};
 
@@ -40,7 +42,7 @@ fn read_pdf_file_bytes(path: String) -> Result<Vec<u8>, String> {
 fn collect_pdf_paths(urls: Vec<url::Url>) -> Vec<PathBuf> {
     urls.into_iter()
         .filter_map(|url| url.to_file_path().ok())
-        .filter(|path| is_pdf_path(path.as_path()))
+        .filter(|path| is_document_path(path.as_path()))
         .collect()
 }
 
@@ -64,7 +66,7 @@ fn collect_pdf_arg_paths(args: Vec<String>, cwd: &str) -> Vec<PathBuf> {
 fn arg_to_pdf_path(arg: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     if let Ok(url) = url::Url::parse(arg) {
         if let Ok(path) = url.to_file_path() {
-            return is_pdf_path(path.as_path()).then_some(path);
+            return is_document_path(path.as_path()).then_some(path);
         }
     }
 
@@ -77,13 +79,15 @@ fn arg_to_pdf_path(arg: &str, cwd: Option<&Path>) -> Option<PathBuf> {
         path
     };
 
-    is_pdf_path(path.as_path()).then_some(path)
+    is_document_path(path.as_path()).then_some(path)
 }
 
-fn is_pdf_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+fn is_document_path(path: &Path) -> bool {
+    ppd_files::is_ppd_path(path)
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
 fn paths_to_strings(paths: Vec<PathBuf>) -> Vec<String> {
@@ -156,6 +160,9 @@ pub fn run() {
             prepare_pdf_for_open,
             protect_pdf_bytes,
             read_pdf_file_bytes,
+            read_ppd_file_bytes,
+            write_ppd_file_atomic,
+            can_write_ppd_file,
         ])
         .setup(move |app| {
             allow_pdf_paths(app.handle(), &startup_pdf_paths);
@@ -164,4 +171,24 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Paperdesk")
         .run(handle_run_event);
+}
+
+#[cfg(test)]
+mod document_path_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_pdf_and_ppd_from_native_launch_arguments() {
+        assert_eq!(
+            arg_to_pdf_path("notes.PPD", Some(Path::new("/tmp"))),
+            Some(PathBuf::from("/tmp/notes.PPD"))
+        );
+        assert_eq!(
+            arg_to_pdf_path("file:///tmp/notes.ppd", None),
+            Some(PathBuf::from("/tmp/notes.ppd"))
+        );
+        assert!(is_document_path(Path::new("notes.pdf")));
+        assert!(!is_document_path(Path::new("notes.ppdx")));
+        assert!(!is_document_path(Path::new("notes.txt")));
+    }
 }

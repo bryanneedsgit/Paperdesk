@@ -34,6 +34,7 @@ function toDocumentSnapshot(document: PdfDocumentSource): PdfDocumentSourceSnaps
     pageCount: document.pageCount,
     loadedAt: document.loadedAt,
     formFields: document.formFields,
+    security: document.security,
   };
 }
 

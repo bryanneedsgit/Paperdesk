@@ -1,3 +1,4 @@
+import type { DocumentSaveState } from '../project/documentSaveState';
 import type { PdfDocumentSource, PdfPageItem, PdfWorkspace } from '../pdf/types';
 import { normalizePageNotes } from '../notes/pageNotes';
 
@@ -25,6 +26,7 @@ export type AutosavedWorkspaceData = Omit<PdfWorkspace, 'documents' | 'pages'> &
 };
 
 export type AutosavedWorkspaceSnapshot = {
+  documentSaveState?: DocumentSaveState;
   savedAt: string;
   version: 1;
   workspace: AutosavedWorkspaceData;
@@ -87,9 +89,11 @@ function isAutosavedWorkspaceSnapshot(value: unknown): value is AutosavedWorkspa
 
 export function createAutosavedWorkspaceSnapshot(
   workspace: PdfWorkspace,
+  documentSaveState?: DocumentSaveState,
 ): AutosavedWorkspaceSnapshot {
   return cloneJson({
     version: 1,
+    documentSaveState,
     savedAt: new Date().toISOString(),
     workspace: {
       ...workspace,
@@ -152,10 +156,13 @@ export function readAutosavedWorkspace(): AutosavedWorkspaceSnapshot | null {
   }
 }
 
-export function writeAutosavedWorkspace(workspace: PdfWorkspace): void {
+export function writeAutosavedWorkspace(
+  workspace: PdfWorkspace,
+  documentSaveState?: DocumentSaveState,
+): void {
   window.localStorage.setItem(
     workspaceAutosaveKey,
-    JSON.stringify(createAutosavedWorkspaceSnapshot(workspace)),
+    JSON.stringify(createAutosavedWorkspaceSnapshot(workspace, documentSaveState)),
   );
 }
 

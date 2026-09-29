@@ -1,5 +1,7 @@
 import {
   Download,
+  Save,
+  SaveAll,
   HelpCircle,
   Info,
   Maximize2,
@@ -26,6 +28,8 @@ type TopToolbarProps = {
   isFullscreen: boolean;
   onAbout: () => void;
   onExportPdf: () => void;
+  onSave: () => void;
+  onSaveAs: () => void;
   onHelp: () => void;
   onRedo: () => void;
   onSettings: () => void;
@@ -95,6 +99,8 @@ export function TopToolbar({
   isFullscreen,
   onAbout,
   onExportPdf,
+  onSave,
+  onSaveAs,
   onHelp,
   onRedo,
   onSettings,
@@ -137,6 +143,12 @@ export function TopToolbar({
 
       <div className="toolbar-control-strip">
         <nav className="toolbar-control-group toolbar-actions" aria-label="Document actions">
+          <IconToolbarButton disabled={isBusy || !canExportPdf} label="Save" onClick={onSave}>
+            <Save size={16} />
+          </IconToolbarButton>
+          <IconToolbarButton disabled={isBusy || !canExportPdf} label="Save As" onClick={onSaveAs}>
+            <SaveAll size={16} />
+          </IconToolbarButton>
           <button
             aria-busy={isExportingPdf}
             aria-label="Export PDF"

@@ -1,3 +1,5 @@
+import { createDocumentSaveState, isDocumentDirty } from '../project/documentSaveState';
+import { createWorkspaceFromDocuments } from '../pdf/pdfWorkspace';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDefaultFormSettings, createDefaultFormatterSettings } from '../pdf/pdfWorkspace';
@@ -281,5 +283,19 @@ describe('workspaceStorage', () => {
     });
 
     expect(await readAutosavedWorkspaceSource(document.id)).toBeNull();
+  });
+  it('retains the PPD save path and saved baseline through recovery', () => {
+    const source = createDocument('source', 'source.pdf', [1]);
+    const workspace = createWorkspaceFromDocuments([source]);
+    const saveState = createDocumentSaveState(workspace, '/tmp/notes.ppd');
+    const changed = { ...workspace, name: 'Changed since saving' };
+    const snapshot = createAutosavedWorkspaceSnapshot(changed, saveState);
+    const recovered = createWorkspaceFromAutosave(snapshot, [source]);
+    expect(snapshot.documentSaveState?.filePath).toBe('/tmp/notes.ppd');
+    expect(snapshot.documentSaveState?.format).toBe('ppd');
+    expect(isDocumentDirty(recovered, snapshot.documentSaveState!)).toBe(true);
+    expect(
+      isDocumentDirty({ ...recovered, name: workspace.name }, snapshot.documentSaveState!),
+    ).toBe(false);
   });
 });

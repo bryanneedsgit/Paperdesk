@@ -195,13 +195,14 @@ export const featureGuideSections: FeatureGuideSection[] = [
     steps: [],
     shortcuts: [
       {
-        action: 'Open PDFs',
+        action: 'Open a PDF or PaperDesk document',
         keystroke: 'Ctrl/Cmd + O',
       },
       {
-        action: 'Export the current workspace',
+        action: 'Save the current document',
         keystroke: 'Ctrl/Cmd + S',
       },
+      { action: 'Save As', keystroke: 'Ctrl/Cmd + Shift + S' },
       {
         action: 'Open document search',
         keystroke: 'Ctrl/Cmd + F',
