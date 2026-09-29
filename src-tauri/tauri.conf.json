@@ -56,6 +56,14 @@
         "role": "Viewer",
         "rank": "Owner",
         "contentTypes": ["com.adobe.pdf"]
+      },
+      {
+        "ext": ["ppd"],
+        "name": "PaperDesk Document",
+        "description": "PaperDesk document with editable notes",
+        "mimeType": "application/x-paperdesk",
+        "role": "Editor",
+        "rank": "Owner"
       }
     ],
     "icon": [

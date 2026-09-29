@@ -9,6 +9,8 @@ type ShortcutHandlers = {
   copyAnnotation: () => void;
   deleteSelectedPages: () => void;
   exportPdf: () => void;
+  saveDocument?: () => void;
+  saveDocumentAs?: () => void;
   navigatePage: (direction: -1 | 1) => void;
   openPdf: () => void;
   pasteAnnotation: () => void;
@@ -48,7 +50,8 @@ export function registerWorkspaceShortcuts(handlers: ShortcutHandlers): () => vo
     if (primaryModifier && key === 's') {
       preventAndRun(event, () => {
         if (handlers.canExportPdf()) {
-          handlers.exportPdf();
+          if (event.shiftKey && handlers.saveDocumentAs) handlers.saveDocumentAs();
+          else (handlers.saveDocument ?? handlers.exportPdf)();
         }
       });
       return;

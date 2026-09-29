@@ -39,10 +39,16 @@ export type PdfLoadOptions = {
   requestPassword?: PdfPasswordProvider;
 };
 
-export async function pickPdfPath(defaultPath?: string): Promise<string | null> {
+export async function pickPdfPath(
+  defaultPath?: string,
+  includeProjects = false,
+): Promise<string | null> {
   const selectedPath = await open({
     ...pdfDialogOptions,
     defaultPath,
+    filters: includeProjects
+      ? [{ name: 'PDF or PaperDesk Document', extensions: ['pdf', 'ppd'] }]
+      : pdfFileFilters,
     multiple: false,
   });
 

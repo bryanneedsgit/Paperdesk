@@ -114,4 +114,23 @@ describe('registerWorkspaceShortcuts clipboard annotations', () => {
     expect(copyAnnotation).not.toHaveBeenCalled();
     expect(pasteAnnotation).not.toHaveBeenCalled();
   });
+  it('routes Save and Save As while the notes editor is focused', () => {
+    const handlers = createHandlers({
+      canExportPdf: () => true,
+      saveDocument: vi.fn(),
+      saveDocumentAs: vi.fn(),
+    });
+    const unregister = registerWorkspaceShortcuts(handlers);
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    document.body.append(editor);
+    editor.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 's' }));
+    editor.dispatchEvent(
+      new KeyboardEvent('keydown', { bubbles: true, metaKey: true, shiftKey: true, key: 'S' }),
+    );
+    expect(handlers.saveDocument).toHaveBeenCalledTimes(1);
+    expect(handlers.saveDocumentAs).toHaveBeenCalledTimes(1);
+    expect(handlers.exportPdf).not.toHaveBeenCalled();
+    unregister();
+  });
 });

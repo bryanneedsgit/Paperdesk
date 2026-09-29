@@ -17,6 +17,7 @@ The app is designed for local page-level PDF workflows. It does not upload PDFs 
 ## Features
 
 - Open local PDFs without uploading or syncing files.
+- Save portable `.ppd` documents containing source PDFs, editable changes, and page notes.
 - Open supported password-protected PDFs with session-only passwords.
 - Merge multiple PDFs into one editable workspace.
 - Open a scrollable four-column thumbnail overview for each PDF workspace, with source filenames and bookmark markers.
@@ -41,6 +42,14 @@ For a user-facing feature directory, see [guide/README.md](guide/README.md).
 6. Use **Annotations** and the annotation toolbar to add notes, text, highlights, shapes, pen marks, or signatures.
 7. Use **Export** to save a new final PDF. The original source PDFs are left unchanged unless you explicitly confirm overwriting one of them.
 8. Use **Protection** in the Document panel to save a locked or unlocked copy. Exports from protected workspaces ask whether to keep protection.
+
+### Saving page notes
+
+Use **Save** (Ctrl/Cmd+S) to save the current document. If it is a PDF with nonempty page notes, Paperdesk offers **Save as .ppd**, **Export PDF**, or **Cancel**. Opening the Notes panel or leaving it blank does not trigger this suggestion. Exported PDFs exclude page notes.
+
+A `.ppd` file contains the source PDFs and editable workspace data, so it can be moved or shared without the originals. Open it through **Open document**, recent files, drag and drop, or the system file association. Subsequent saves update the same `.ppd`; **Save As** (Ctrl/Cmd+Shift+S) chooses another location. Clearing the notes in an existing `.ppd` keeps its format.
+
+Version 1 uses a ZIP container with `manifest.json` and `sources/<index>.pdf`. The manifest records format `paperdesk` and version `1`. Files are limited to 512 MB total and 32 MB of metadata. Passwords and undo history are excluded. These files are unencrypted; saving from a protected PDF requires confirmation.
 
 ## Requirements
 

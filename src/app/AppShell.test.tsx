@@ -1,12 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PdfDocumentSource, PdfPageId, PdfWorkspace } from '../lib/pdf/types';
 import type { PdfLoadOptions } from '../lib/pdf/pdfLoader';
+import { createWorkspaceFromDocuments } from '../lib/pdf/pdfWorkspace';
+import { updatePageNote } from '../lib/notes/pageNotes';
 import { AppShell } from './AppShell';
 
 const {
   exportWorkspaceToPdfBytes,
+  savePpd,
+  openPpd,
   invoke,
   listen,
   loadPdfDocumentsFromPaths,
@@ -16,6 +20,8 @@ const {
   saveWorkspacePdfBytes,
 } = vi.hoisted(() => ({
   exportWorkspaceToPdfBytes: vi.fn(),
+  savePpd: vi.fn(),
+  openPpd: vi.fn(),
   invoke: vi.fn(),
   listen: vi.fn(),
   loadPdfDocumentsFromPaths: vi.fn(),
@@ -24,6 +30,8 @@ const {
   saveWorkspacePdf: vi.fn(),
   saveWorkspacePdfBytes: vi.fn(),
 }));
+
+vi.mock('../lib/project/ppdFiles', () => ({ savePpd, openPpd }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke,
@@ -43,6 +51,8 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     isFullscreen: vi.fn().mockResolvedValue(false),
     onResized: vi.fn().mockResolvedValue(() => undefined),
+    onCloseRequested: vi.fn().mockResolvedValue(() => undefined),
+    destroy: vi.fn().mockResolvedValue(undefined),
     setFullscreen: vi.fn().mockResolvedValue(undefined),
   }),
 }));
@@ -177,6 +187,8 @@ describe('AppShell PDF opening', () => {
       }),
     );
 
+    savePpd.mockReset().mockResolvedValue('/tmp/notes.ppd');
+    openPpd.mockReset();
     pickPdfPath.mockReset();
     invoke.mockReset();
     invoke.mockResolvedValue([]);
@@ -220,10 +232,10 @@ describe('AppShell PDF opening', () => {
 
     render(<AppShell />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     await screen.findByRole('tab', { name: /first\.pdf/ });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
 
     const prompt = await screen.findByRole('dialog', { name: 'Open PDF?' });
 
@@ -265,7 +277,7 @@ describe('AppShell PDF opening', () => {
 
     render(<AppShell />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     await screen.findByRole('tab', { name: /first\.pdf/ });
     await waitFor(() => expect(listenerRegistrations.length).toBeGreaterThan(0));
 
@@ -307,7 +319,7 @@ describe('AppShell PDF opening', () => {
     );
 
     render(<AppShell />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
 
     const passwordDialog = await screen.findByRole('dialog', {
       name: 'Unlock locked.pdf',
@@ -348,7 +360,7 @@ describe('AppShell PDF opening', () => {
       .mockResolvedValueOnce([secondDocument]);
 
     render(<AppShell />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
 
     await screen.findByRole('tab', { name: /bookmark\.pdf/ });
 
@@ -361,7 +373,7 @@ describe('AppShell PDF opening', () => {
     ).toBe('true');
     expect(screen.getByRole('status').textContent).toContain('Bookmarked page 1.');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
 
     await screen.findByRole('tab', { name: /second\.pdf/ });
@@ -395,10 +407,10 @@ describe('AppShell PDF opening', () => {
       .mockResolvedValueOnce([secondDocument]);
 
     render(<AppShell />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     await screen.findByRole('tab', { name: /first\.pdf/ });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
     await screen.findByRole('tab', { name: /second\.pdf/ });
 
@@ -427,7 +439,7 @@ describe('AppShell PDF opening', () => {
     loadPdfDocumentsFromPaths.mockResolvedValueOnce([sourceDocument]);
 
     render(<AppShell />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
     await screen.findByRole('tab', { name: /notes\.pdf/ });
 
     fireEvent.click(screen.getByRole('button', { name: 'Open current page notes' }));
@@ -455,7 +467,7 @@ describe('AppShell PDF opening', () => {
     render(<AppShell />);
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Open PDF' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
 
       for (let index = 0; index < 6; index += 1) {
         await Promise.resolve();
@@ -471,5 +483,176 @@ describe('AppShell PDF opening', () => {
     act(() => vi.advanceTimersByTime(4000));
 
     expect(screen.queryByRole('status')).toBeNull();
+  });
+  async function openNotesFixture() {
+    pickPdfPath.mockResolvedValueOnce('/tmp/notes.pdf');
+    loadPdfDocumentsFromPaths.mockResolvedValueOnce([
+      createDocument('notes', 'notes.pdf', '/tmp/notes.pdf'),
+    ]);
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    await screen.findByRole('tab', { name: /notes\.pdf/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Open current page notes' }));
+    return screen.getByRole('textbox', { name: 'Notes for page 1' });
+  }
+
+  it('keeps saves as PDF for unused, blank, and cleared notes', async () => {
+    const editor = await openNotesFixture();
+    for (const text of ['', '   ', '']) {
+      editor.textContent = text;
+      fireEvent.input(editor);
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false),
+      );
+    }
+    expect(saveWorkspacePdf).toHaveBeenCalledTimes(3);
+    expect(savePpd).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('dialog', { name: 'Save your notes with this document?' }),
+    ).toBeNull();
+  });
+
+  it('flushes notes on save, offers PPD, then updates that file and supports Save As', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'Pending input'; // Save must read even an input not yet dispatched.
+    fireEvent.keyDown(editor, { key: 's', ctrlKey: true });
+    expect(
+      await screen.findByRole('dialog', { name: 'Save your notes with this document?' }),
+    ).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Save as .ppd/ }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText('Edited')).toBeNull());
+    expect(JSON.stringify(savePpd.mock.calls[0][0].pageNotes)).toContain('Pending input');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(2));
+    expect(savePpd.mock.calls[1][1]).toBe('/tmp/notes.ppd');
+    expect(savePpd.mock.calls[1][2]).toBe(false);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save As' }).hasAttribute('disabled')).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save As' }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(3));
+    expect(savePpd.mock.calls[2][2]).toBe(true);
+  });
+
+  it('keeps note changes unsaved after PDF export, cancellation, or a failed PPD save', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'Keep me';
+    fireEvent.input(editor);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Export PDF Notes stay/ }));
+    await waitFor(() => expect(saveWorkspacePdf).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false),
+    );
+    expect(screen.getByText('Edited')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    });
+    expect(savePpd).not.toHaveBeenCalled();
+    savePpd.mockRejectedValueOnce(new Error('Disk full'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Save as .ppd/ }));
+    await screen.findByText('Disk full');
+    expect(screen.getByText('Edited')).not.toBeNull();
+    expect(editor.textContent).toBe('Keep me');
+  });
+
+  it('retains edits made while saving and warns when closing note-only changes', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'First';
+    fireEvent.input(editor);
+    let finishSave: (path: string) => void = () => undefined;
+    savePpd.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Save as .ppd/ }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(1));
+    editor.textContent = 'Newer';
+    fireEvent.input(editor);
+    await act(async () => {
+      finishSave('/tmp/notes.ppd');
+    });
+    expect(screen.getByText('Edited')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close notes.pdf' }));
+    const dialog = await screen.findByRole('dialog', { name: /Save changes to/ });
+    expect(dialog.textContent).toContain('notes.pdf');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    });
+    expect(screen.getByRole('tab', { name: /notes\.pdf/ })).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close notes.pdf' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /notes\.pdf/ })).toBeNull());
+  });
+
+  it('opens PPD in its own tab and keeps the format after clearing its notes', async () => {
+    await openNotesFixture();
+    let project = createWorkspaceFromDocuments([createDocument('project', 'project.pdf', '')]);
+    project = updatePageNote(project, project.pages[0].id, {
+      version: 1,
+      blocks: [{ type: 'paragraph', runs: [{ text: 'Project note' }] }],
+    });
+    pickPdfPath.mockResolvedValueOnce('/tmp/project.ppd');
+    openPpd.mockResolvedValueOnce(project);
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    await screen.findByRole('tab', { name: /project\.pdf/ });
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const editor = screen.getByRole('textbox', { name: 'Notes for page 1' });
+    editor.textContent = '';
+    fireEvent.input(editor);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(1));
+    expect(savePpd.mock.calls[0][1]).toBe('/tmp/project.ppd');
+    expect(savePpd.mock.calls[0][0].pageNotes).toEqual({});
+  });
+  it('does not suggest PPD for a PDF when only another tab has notes', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'Notes in the first tab';
+    fireEvent.input(editor);
+    pickPdfPath.mockResolvedValueOnce('/tmp/second.pdf');
+    loadPdfDocumentsFromPaths.mockResolvedValueOnce([
+      createDocument('second', 'second.pdf', '/tmp/second.pdf'),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
+    await screen.findByRole('tab', { name: /second\.pdf/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveWorkspacePdf).toHaveBeenCalledTimes(1));
+    expect(savePpd).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps a closing document open after cancelling its save location', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'Unsaved note';
+    fireEvent.input(editor);
+    savePpd.mockResolvedValueOnce(null);
+    fireEvent.click(screen.getByRole('button', { name: 'Close notes.pdf' }));
+    const dialog = await screen.findByRole('dialog', { name: /Save changes to/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Save as .ppd/ }));
+    await waitFor(() => expect(savePpd).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('tab', { name: /notes\.pdf/ })).not.toBeNull();
+    expect(screen.getByText('Edited')).not.toBeNull();
+  });
+
+  it('preserves the current document if opening a PPD fails', async () => {
+    const editor = await openNotesFixture();
+    editor.textContent = 'Keep current notes';
+    fireEvent.input(editor);
+    pickPdfPath.mockResolvedValueOnce('/tmp/broken.ppd');
+    openPpd.mockRejectedValueOnce(new Error('Invalid PaperDesk document'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    await screen.findByText('Invalid PaperDesk document');
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(editor.textContent).toBe('Keep current notes');
   });
 });

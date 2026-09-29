@@ -284,6 +284,11 @@ export function PageNotesPanel({
     onChange(nextDocument);
   }, [onChange]);
 
+  useEffect(() => {
+    window.addEventListener('paperdesk:flush-notes', emitChange);
+    return () => window.removeEventListener('paperdesk:flush-notes', emitChange);
+  }, [emitChange]);
+
   useLayoutEffect(() => {
     if (editorRef.current) {
       writePageNoteToEditor(editorRef.current, noteDocument ?? emptyNote);

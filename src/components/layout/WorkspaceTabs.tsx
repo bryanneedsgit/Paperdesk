@@ -255,11 +255,11 @@ export function WorkspaceTabs({
         className="workspace-tab-new"
         disabled={isBusy}
         onClick={onOpenPdf}
-        title="Open PDF"
+        title="Open PDF or PaperDesk document"
         type="button"
       >
         <FilePlus2 size={15} />
-        <span>Open PDF</span>
+        <span>Open document</span>
       </button>
     </nav>
   );

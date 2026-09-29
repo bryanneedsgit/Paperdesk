@@ -1,3 +1,15 @@
+import { flushSync } from 'react-dom';
+import {
+  DocumentSaveDialog,
+  type DocumentSaveChoice,
+  type DocumentSaveRequest,
+} from '../components/layout/DocumentSaveDialog';
+import {
+  createDocumentSaveState,
+  documentContentKey,
+  isDocumentDirty,
+  type DocumentSaveState,
+} from '../lib/project/documentSaveState';
 import {
   useCallback,
   useEffect,
@@ -142,7 +154,7 @@ import {
   type WorkspaceStorageSettings,
 } from '../lib/storage/workspaceStorage';
 import { getFriendlyErrorSuggestion, logDeveloperError } from '../lib/utils/errors';
-import { updatePageNote } from '../lib/notes/pageNotes';
+import { getNotedPageCount, updatePageNote } from '../lib/notes/pageNotes';
 import type { DeckNotesExportOptions } from '../lib/notes/deckNotesExport';
 import { getFileNameFromPath } from '../lib/utils/fileNames';
 import { createId } from '../lib/utils/ids';
@@ -197,6 +209,7 @@ type PageNotesUiState = {
 };
 
 type WorkspaceTab = {
+  saveState: DocumentSaveState;
   color?: string;
   fontFamily?: string;
   history: WorkspaceHistoryState;
@@ -330,10 +343,15 @@ function getDefaultBorderColorForAnnotationTool(tool: PdfAnnotationTool): string
   return null;
 }
 
-function createWorkspaceTab(history: WorkspaceHistoryState, color?: string): WorkspaceTab {
+function createWorkspaceTab(
+  history: WorkspaceHistoryState,
+  color?: string,
+  saveState?: DocumentSaveState,
+): WorkspaceTab {
   return {
     color,
     fontFamily: defaultWorkspaceTabFont,
+    saveState: saveState ?? createDocumentSaveState(history.present),
     id: history.present.id,
     history,
   };
@@ -350,7 +368,7 @@ function createWorkspaceTabSummary(tab: WorkspaceTab, index: number): WorkspaceT
     name: workspace.name,
     documentCount: workspace.documents.length,
     pageCount: visiblePageCount,
-    isEdited: tab.history.past.length > 0,
+    isEdited: isDocumentDirty(workspace, tab.saveState),
   };
 }
 
@@ -388,6 +406,14 @@ function clampPageIndex(pageIndex: number, pageCount: number): number {
 
 function clampZoom(zoom: number): number {
   return Math.min(maxZoom, Math.max(minZoom, zoom));
+}
+
+function isDocumentPath(path: string): boolean {
+  return /\.(pdf|ppd)$/i.test(path);
+}
+
+function flushPageNotes(): void {
+  flushSync(() => window.dispatchEvent(new Event('paperdesk:flush-notes')));
 }
 
 function isPdfPath(path: string): boolean {
@@ -460,6 +486,13 @@ async function loadRecoveredDocumentFromCache(
 export function AppShell() {
   const [initialPageNotesUiState] = useState(readPageNotesUiState);
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([]);
+  const workspaceTabsRef = useRef(workspaceTabs);
+  workspaceTabsRef.current = workspaceTabs;
+  const [pendingSaveRequest, setPendingSaveRequest] = useState<DocumentSaveRequest | null>(null);
+  const pendingSaveResolver = useRef<((choice: DocumentSaveChoice) => void) | null>(null);
+  const saveInProgressRef = useRef(false);
+  const closeInProgressRef = useRef(false);
+  const [isSavingDocument, setIsSavingDocument] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [storageSettings, setStorageSettings] = useState<WorkspaceStorageSettings>(
     readWorkspaceStorageSettings,
@@ -613,17 +646,21 @@ export function AppShell() {
   const pageCount = visiblePages.length;
   const zoomPercent = workspace ? Math.round(workspace.formatterSettings.zoom * 100) : 100;
   const isLoadingPdf = isOpeningPdf || isAddingPdfs;
-  const canExportPdf = canExportWorkspace(workspace) && !isExportingPdf;
+  const canExportPdf = canExportWorkspace(workspace) && !isExportingPdf && !isSavingDocument;
   const canUndoWorkspaceEdit = canUndoWorkspaceHistory(workspaceHistory);
   const canRedoWorkspaceEdit = canRedoWorkspaceHistory(workspaceHistory);
   const activeSourceFileName = getActiveSourceFileName(workspace);
-  const hasUnsavedChanges = canUndoWorkspaceEdit;
+  const hasUnsavedChanges = Boolean(
+    workspace && activeWorkspaceTab && isDocumentDirty(workspace, activeWorkspaceTab.saveState),
+  );
   const loadingMessage = isAddingPdfs
     ? 'Adding PDFs to the current workspace.'
     : 'Reading the selected file locally.';
   const trimmedFindQuery = findQuery.trim();
   const isSpacebarFreehandEnabled =
     storageSettings.spacebarFreehandAnnotation &&
+    !pendingSaveRequest &&
+    !isSavingDocument &&
     !isAboutOpen &&
     !isSettingsOpen &&
     !isShortcutHelpOpen &&
@@ -732,21 +769,25 @@ export function AppShell() {
   );
 
   const replaceWorkspace = useCallback(
-    (nextWorkspace: PdfWorkspace) => {
+    (nextWorkspace: PdfWorkspace, saveState?: DocumentSaveState) => {
       const nextHistory = createWorkspaceHistory(nextWorkspace);
 
       setWorkspaceTabs((currentTabs) => {
         if (!activeWorkspaceId || !currentTabs.some((tab) => tab.id === activeWorkspaceId)) {
           return [
             ...currentTabs,
-            createWorkspaceTab(nextHistory, getWorkspaceTabColor(currentTabs.length)),
+            createWorkspaceTab(nextHistory, getWorkspaceTabColor(currentTabs.length), saveState),
           ];
         }
 
         return currentTabs.map((tab, tabIndex) =>
           tab.id === activeWorkspaceId
             ? {
-                ...createWorkspaceTab(nextHistory, tab.color ?? getWorkspaceTabColor(tabIndex)),
+                ...createWorkspaceTab(
+                  nextHistory,
+                  tab.color ?? getWorkspaceTabColor(tabIndex),
+                  saveState,
+                ),
                 fontFamily: tab.fontFamily ?? defaultWorkspaceTabFont,
               }
             : tab,
@@ -757,15 +798,22 @@ export function AppShell() {
     [activeWorkspaceId],
   );
 
-  const openWorkspaceInNewTab = useCallback((nextWorkspace: PdfWorkspace) => {
-    const nextTab = createWorkspaceTab(createWorkspaceHistory(nextWorkspace));
+  const openWorkspaceInNewTab = useCallback(
+    (nextWorkspace: PdfWorkspace, saveState?: DocumentSaveState) => {
+      const nextTab = createWorkspaceTab(
+        createWorkspaceHistory(nextWorkspace),
+        undefined,
+        saveState,
+      );
 
-    setWorkspaceTabs((currentTabs) => [
-      ...currentTabs,
-      { ...nextTab, color: getWorkspaceTabColor(currentTabs.length) },
-    ]);
-    setActiveWorkspaceId(nextTab.id);
-  }, []);
+      setWorkspaceTabs((currentTabs) => [
+        ...currentTabs,
+        { ...nextTab, color: getWorkspaceTabColor(currentTabs.length) },
+      ]);
+      setActiveWorkspaceId(nextTab.id);
+    },
+    [],
+  );
 
   const updateActiveWorkspaceHistory = useCallback(
     (update: (history: WorkspaceHistoryState) => WorkspaceHistoryState) => {
@@ -1203,7 +1251,7 @@ export function AppShell() {
           setRecoveryRelinkedDocuments({});
           setRecoveryCachedSourceIds(new Set());
         } else if (workspace) {
-          writeAutosavedWorkspace(workspace);
+          writeAutosavedWorkspace(workspace, activeWorkspaceTab?.saveState);
           void writeAutosavedWorkspaceSources(workspace).catch((error) => {
             logDeveloperError('Unable to cache autosaved source PDFs.', error);
           });
@@ -1212,7 +1260,7 @@ export function AppShell() {
         return nextSettings;
       });
     },
-    [workspace],
+    [activeWorkspaceTab?.saveState, workspace],
   );
 
   const handleClearLocalData = useCallback(() => {
@@ -1300,7 +1348,14 @@ export function AppShell() {
         return;
       }
 
-      replaceWorkspace(createWorkspaceFromAutosave(recoverySnapshot, documents));
+      const recoveredWorkspace = createWorkspaceFromAutosave(recoverySnapshot, documents);
+      replaceWorkspace(
+        recoveredWorkspace,
+        recoverySnapshot.documentSaveState ?? {
+          ...createDocumentSaveState(recoveredWorkspace),
+          savedContent: '',
+        },
+      );
       setRecoverySnapshot(null);
       setRecoveryMissingSourceIds(new Set());
       setRecoveryRelinkedDocuments({});
@@ -1529,10 +1584,31 @@ export function AppShell() {
 
   const handlePdfPathsWithPrompt = useCallback(
     async (paths: string[], source: PendingPdfImportSource) => {
+      const projectPaths = paths.filter((path) => /\.ppd$/i.test(path));
+      for (const path of projectPaths) {
+        setIsOpeningPdf(true);
+        setIsDraggingPdfs(false);
+        try {
+          const { openPpd } = await import('../lib/project/ppdFiles');
+          const openedWorkspace = await openPpd(path);
+          openWorkspaceInNewTab(openedWorkspace, createDocumentSaveState(openedWorkspace, path));
+          rememberRecentFiles([path]);
+          showToast('Opened PaperDesk document.', 'success');
+        } catch (error) {
+          logDeveloperError('PaperDesk document open failed.', error);
+          showErrorToast(
+            error instanceof Error ? error.message : 'Unable to open this PaperDesk document.',
+            error,
+          );
+        } finally {
+          setIsOpeningPdf(false);
+        }
+      }
+      if (projectPaths.length && !paths.some(isPdfPath)) return;
       const pdfPaths = paths.filter(isPdfPath);
 
       if (pdfPaths.length === 0) {
-        showToast('Choose one or more PDF files.', 'error');
+        showToast('Choose PDF or .ppd files.', 'error');
         return;
       }
 
@@ -1581,6 +1657,8 @@ export function AppShell() {
     },
     [
       addDocumentsToWorkspaceTab,
+      openWorkspaceInNewTab,
+      rememberRecentFiles,
       loadPdfDocumentsForSession,
       openDocumentsInNewWorkspace,
       requestPdfImportTarget,
@@ -1590,7 +1668,8 @@ export function AppShell() {
   );
 
   const handleOpenPdf = useCallback(async () => {
-    const path = await pickPdfPath();
+    if (saveInProgressRef.current || closeInProgressRef.current) return;
+    const path = await pickPdfPath(undefined, true);
 
     if (!path) {
       return;
@@ -1602,39 +1681,6 @@ export function AppShell() {
   const handleSelectWorkspaceTab = useCallback((workspaceId: string) => {
     setActiveWorkspaceId(workspaceId);
   }, []);
-
-  const handleCloseWorkspaceTab = useCallback(
-    (workspaceId: string) => {
-      const tabToClose = workspaceTabs.find((tab) => tab.id === workspaceId);
-
-      if (!tabToClose) {
-        return;
-      }
-
-      if (
-        tabToClose.history.past.length > 0 &&
-        !window.confirm(
-          `Close "${tabToClose.history.present.name}"? Unsaved edits will be removed.`,
-        )
-      ) {
-        return;
-      }
-
-      const tabIndex = workspaceTabs.findIndex((tab) => tab.id === workspaceId);
-      const nextTabs = workspaceTabs.filter((tab) => tab.id !== workspaceId);
-
-      for (const document of tabToClose.history.present.documents) {
-        documentPasswordsRef.current.delete(document.id);
-      }
-
-      setWorkspaceTabs(nextTabs);
-
-      if (activeWorkspaceId === workspaceId) {
-        setActiveWorkspaceId(nextTabs[Math.min(tabIndex, nextTabs.length - 1)]?.id ?? null);
-      }
-    },
-    [activeWorkspaceId, workspaceTabs],
-  );
 
   const handleRenameWorkspaceTab = useCallback((workspaceId: string, name: string) => {
     const nextName = name.trim() || 'Untitled workspace';
@@ -1666,89 +1712,247 @@ export function AppShell() {
     );
   }, []);
 
-  const handleExportPdf = useCallback(async () => {
-    if (!workspace || !canExportWorkspace(workspace)) {
-      showToast('Paperdesk cannot export an empty document.', 'error');
-      return;
-    }
-
-    const protectedDocuments = workspace.documents.filter(
-      (document) => document.security?.wasEncrypted,
-    );
-    let protectionChoice: ProtectedPdfExportChoice = 'unlocked';
-    let protectionPassword: string | null = null;
-
-    if (protectedDocuments.length > 0) {
-      const requestedChoice = await requestProtectedExportChoice();
-
-      if (!requestedChoice) {
-        return;
+  const exportDocumentPdf = useCallback(
+    async (workspace: PdfWorkspace): Promise<string | null> => {
+      if (!workspace || !canExportWorkspace(workspace)) {
+        showToast('Paperdesk cannot export an empty document.', 'error');
+        return null;
       }
 
-      protectionChoice = requestedChoice;
+      const protectedDocuments = workspace.documents.filter(
+        (document) => document.security?.wasEncrypted,
+      );
+      let protectionChoice: ProtectedPdfExportChoice = 'unlocked';
+      let protectionPassword: string | null = null;
 
-      if (protectionChoice === 'protected') {
-        const sessionPasswords = new Set(
-          protectedDocuments
-            .map((document) => documentPasswordsRef.current.get(document.id))
-            .filter((password): password is string => Boolean(password)),
+      if (protectedDocuments.length > 0) {
+        const requestedChoice = await requestProtectedExportChoice();
+
+        if (!requestedChoice) {
+          return null;
+        }
+
+        protectionChoice = requestedChoice;
+
+        if (protectionChoice === 'protected') {
+          const sessionPasswords = new Set(
+            protectedDocuments
+              .map((document) => documentPasswordsRef.current.get(document.id))
+              .filter((password): password is string => Boolean(password)),
+          );
+
+          if (sessionPasswords.size === 1) {
+            protectionPassword = Array.from(sessionPasswords)[0];
+          } else {
+            protectionPassword = await requestNewPdfPassword({
+              description:
+                'Set the password that will open this exported copy. The workspace may contain sources with different passwords.',
+              submitLabel: 'Continue to export',
+              title: 'Set export password',
+            });
+          }
+
+          if (protectionPassword === null) {
+            return null;
+          }
+        }
+      }
+
+      setIsExportingPdf(true);
+      showToast('Exporting PDF...', 'info');
+
+      try {
+        const result =
+          protectionChoice === 'protected' && protectionPassword !== null
+            ? await saveWorkspacePdfBytes({
+                bytes: await protectPdfBytes(
+                  await exportWorkspaceToPdfBytes(workspace),
+                  protectionPassword,
+                ),
+                defaultPath: getDefaultExportFileName(workspace),
+                title: 'Export Protected PDF',
+                workspace,
+              })
+            : await saveWorkspacePdf(workspace);
+
+        if (!result) {
+          setWorkspaceToast(null);
+          return null;
+        }
+
+        showToast(
+          `Exported ${result.pageCount} ${result.pageCount === 1 ? 'page' : 'pages'} to PDF.`,
+          'success',
         );
+        return result.filePath;
+      } catch (error) {
+        logDeveloperError('Export PDF failed.', error);
+        showErrorToast(
+          error instanceof PdfSecurityError
+            ? getPdfSecurityErrorMessage(error)
+            : getPdfExportErrorMessage(error),
+          error,
+        );
+        return null;
+      } finally {
+        setIsExportingPdf(false);
+      }
+    },
+    [requestNewPdfPassword, requestProtectedExportChoice, showErrorToast, showToast],
+  );
 
-        if (sessionPasswords.size === 1) {
-          protectionPassword = Array.from(sessionPasswords)[0];
+  const handleExportPdf = useCallback(() => {
+    flushPageNotes();
+    const tab = workspaceTabsRef.current.find((tab) => tab.id === activeWorkspaceId);
+    if (tab) void exportDocumentPdf(tab.history.present);
+  }, [activeWorkspaceId, exportDocumentPdf]);
+
+  const resolveSaveChoice = useCallback((choice: DocumentSaveChoice) => {
+    const resolve = pendingSaveResolver.current;
+    pendingSaveResolver.current = null;
+    setPendingSaveRequest(null);
+    resolve?.(choice);
+  }, []);
+
+  const requestSaveChoice = useCallback(
+    (request: DocumentSaveRequest): Promise<DocumentSaveChoice> => {
+      pendingSaveResolver.current?.(null);
+      return new Promise((resolve) => {
+        pendingSaveResolver.current = resolve;
+        setPendingSaveRequest(request);
+      });
+    },
+    [],
+  );
+
+  const saveDocumentTab = useCallback(
+    async (tabId: string, saveAs = false): Promise<boolean> => {
+      if (saveInProgressRef.current) return false;
+      flushPageNotes();
+      const tab = workspaceTabsRef.current.find((tab) => tab.id === tabId);
+      if (!tab || !canExportWorkspace(tab.history.present)) return false;
+      saveInProgressRef.current = true;
+      setIsSavingDocument(true);
+      const snapshot = tab.history.present;
+      const savedContent = documentContentKey(snapshot);
+      try {
+        let format = tab.saveState.format;
+        if (format === 'pdf' && getNotedPageCount(snapshot) > 0) {
+          const choice = await requestSaveChoice({ kind: 'format', name: snapshot.name });
+          if (!choice) return false;
+          if (choice === 'pdf') {
+            await exportDocumentPdf(snapshot);
+            return false; // The notes still need to be saved; keep a closing document open.
+          }
+          format = 'ppd';
+        }
+        let filePath: string | null;
+        if (format === 'ppd') {
+          const { savePpd } = await import('../lib/project/ppdFiles');
+          filePath = await savePpd(
+            snapshot,
+            tab.saveState.format === 'ppd' ? tab.saveState.filePath : undefined,
+            saveAs,
+          );
         } else {
-          protectionPassword = await requestNewPdfPassword({
-            description:
-              'Set the password that will open this exported copy. The workspace may contain sources with different passwords.',
-            submitLabel: 'Continue to export',
-            title: 'Set export password',
-          });
+          filePath = await exportDocumentPdf(snapshot);
         }
+        if (!filePath) return false;
+        flushSync(() =>
+          setWorkspaceTabs((tabs) =>
+            tabs.map((current) =>
+              current.id === tabId
+                ? { ...current, saveState: { format, filePath, savedContent } }
+                : current,
+            ),
+          ),
+        );
+        rememberRecentFiles([filePath]);
+        if (format === 'ppd') showToast('Saved PaperDesk document and notes.', 'success');
+        const current = workspaceTabsRef.current.find((tab) => tab.id === tabId);
+        return Boolean(current && !isDocumentDirty(current.history.present, current.saveState));
+      } catch (error) {
+        logDeveloperError('Document save failed.', error);
+        showErrorToast(
+          error instanceof Error ? error.message : 'Unable to save this document.',
+          error,
+        );
+        return false;
+      } finally {
+        saveInProgressRef.current = false;
+        setIsSavingDocument(false);
+      }
+    },
+    [exportDocumentPdf, rememberRecentFiles, requestSaveChoice, showErrorToast, showToast],
+  );
 
-        if (protectionPassword === null) {
-          return;
+  const handleSaveDocument = useCallback(() => {
+    if (activeWorkspaceId) void saveDocumentTab(activeWorkspaceId);
+  }, [activeWorkspaceId, saveDocumentTab]);
+  const handleSaveDocumentAs = useCallback(() => {
+    if (activeWorkspaceId) void saveDocumentTab(activeWorkspaceId, true);
+  }, [activeWorkspaceId, saveDocumentTab]);
+
+  const confirmCloseTab = useCallback(
+    async (tabId: string): Promise<boolean> => {
+      flushPageNotes();
+      const tab = workspaceTabsRef.current.find((tab) => tab.id === tabId);
+      if (!tab || !isDocumentDirty(tab.history.present, tab.saveState)) return true;
+      const choice = await requestSaveChoice({ kind: 'close', name: tab.history.present.name });
+      if (choice === 'discard') return true;
+      if (choice === 'save') return saveDocumentTab(tabId);
+      return false;
+    },
+    [requestSaveChoice, saveDocumentTab],
+  );
+
+  const handleCloseWorkspaceTab = useCallback(
+    async (tabId: string) => {
+      if (closeInProgressRef.current || saveInProgressRef.current) return;
+      closeInProgressRef.current = true;
+      try {
+        if (!(await confirmCloseTab(tabId))) return;
+        const tabs = workspaceTabsRef.current;
+        const index = tabs.findIndex((tab) => tab.id === tabId);
+        const closingTab = tabs[index];
+        closingTab?.history.present.documents.forEach((document) =>
+          documentPasswordsRef.current.delete(document.id),
+        );
+        const remaining = tabs.filter((tab) => tab.id !== tabId);
+        setWorkspaceTabs(remaining);
+        setActiveWorkspaceId((current) =>
+          current === tabId
+            ? (remaining[Math.min(index, remaining.length - 1)]?.id ?? null)
+            : current,
+        );
+        if (!remaining.length) clearAutosavedWorkspace();
+      } finally {
+        closeInProgressRef.current = false;
+      }
+    },
+    [confirmCloseTab],
+  );
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    const unlisten = appWindow.onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (closeInProgressRef.current || saveInProgressRef.current) return;
+      closeInProgressRef.current = true;
+      try {
+        for (const tab of workspaceTabsRef.current) {
+          if (!(await confirmCloseTab(tab.id))) return;
         }
+        clearAutosavedWorkspace();
+        await appWindow.destroy();
+      } finally {
+        closeInProgressRef.current = false;
       }
-    }
-
-    setIsExportingPdf(true);
-    showToast('Exporting PDF...', 'info');
-
-    try {
-      const result =
-        protectionChoice === 'protected' && protectionPassword !== null
-          ? await saveWorkspacePdfBytes({
-              bytes: await protectPdfBytes(
-                await exportWorkspaceToPdfBytes(workspace),
-                protectionPassword,
-              ),
-              defaultPath: getDefaultExportFileName(workspace),
-              title: 'Export Protected PDF',
-              workspace,
-            })
-          : await saveWorkspacePdf(workspace);
-
-      if (!result) {
-        setWorkspaceToast(null);
-        return;
-      }
-
-      showToast(
-        `Exported ${result.pageCount} ${result.pageCount === 1 ? 'page' : 'pages'} to PDF.`,
-        'success',
-      );
-    } catch (error) {
-      logDeveloperError('Export PDF failed.', error);
-      showErrorToast(
-        error instanceof PdfSecurityError
-          ? getPdfSecurityErrorMessage(error)
-          : getPdfExportErrorMessage(error),
-        error,
-      );
-    } finally {
-      setIsExportingPdf(false);
-    }
-  }, [requestNewPdfPassword, requestProtectedExportChoice, showErrorToast, showToast, workspace]);
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, [confirmCloseTab]);
 
   const handleExportDeckNotes = useCallback(
     async (options: DeckNotesExportOptions) => {
@@ -1971,10 +2175,10 @@ export function AppShell() {
 
   const handleDroppedPdfPaths = useCallback(
     async (paths: string[]) => {
-      const pdfPaths = paths.filter(isPdfPath);
+      const pdfPaths = paths.filter(isDocumentPath);
 
       if (pdfPaths.length === 0) {
-        showToast('Drop one or more PDF files to open them.', 'error');
+        showToast('Drop PDF or .ppd files to open them.', 'error');
         return;
       }
 
@@ -1985,7 +2189,7 @@ export function AppShell() {
 
   const handleOpenPdfPathsFromOs = useCallback(
     async (paths: string[]) => {
-      const pdfPaths = paths.filter(isPdfPath);
+      const pdfPaths = paths.filter(isDocumentPath);
 
       if (pdfPaths.length === 0) {
         return;
@@ -2772,11 +2976,11 @@ export function AppShell() {
       return;
     }
 
-    writeAutosavedWorkspace(workspace);
+    writeAutosavedWorkspace(workspace, activeWorkspaceTab?.saveState);
     void writeAutosavedWorkspaceSources(workspace).catch((error) => {
       logDeveloperError('Unable to cache autosaved source PDFs.', error);
     });
-  }, [storageSettings.autosaveWorkspace, workspace]);
+  }, [activeWorkspaceTab?.saveState, storageSettings.autosaveWorkspace, workspace]);
 
   useEffect(() => {
     if (!workspaceToast) {
@@ -2818,7 +3022,11 @@ export function AppShell() {
     return registerWorkspaceShortcuts({
       canCopyAnnotation: () => canCopySelectedFreehandAnnotation,
       canDeletePages: () => Boolean(selectedAnnotationId || selectedVisiblePageIds.length),
-      canExportPdf: () => canExportWorkspace(workspace) && !isExportingPdf,
+      canExportPdf: () =>
+        canExportWorkspace(workspace) &&
+        !isExportingPdf &&
+        !isSavingDocument &&
+        !pendingSaveRequest,
       canNavigatePages: () => pageCount > 0,
       canPasteAnnotation: () => canPasteFreehandAnnotation,
       canRedo: () => canRedoWorkspaceHistory(workspaceHistory),
@@ -2826,6 +3034,8 @@ export function AppShell() {
       copyAnnotation: handleCopySelectedFreehandAnnotation,
       deleteSelectedPages: handleShortcutDelete,
       exportPdf: handleExportPdf,
+      saveDocument: handleSaveDocument,
+      saveDocumentAs: handleSaveDocumentAs,
       navigatePage: (direction) => selectPageByIndex(activePageIndex + direction),
       openPdf: handleOpenPdf,
       pasteAnnotation: handlePasteFreehandAnnotation,
@@ -2840,6 +3050,10 @@ export function AppShell() {
     canPasteFreehandAnnotation,
     handleCopySelectedFreehandAnnotation,
     handleExportPdf,
+    handleSaveDocument,
+    handleSaveDocumentAs,
+    isSavingDocument,
+    pendingSaveRequest,
     handleOpenPdf,
     handlePasteFreehandAnnotation,
     handleShortcutDelete,
@@ -2863,7 +3077,7 @@ export function AppShell() {
     getCurrentWebview()
       .onDragDropEvent((event) => {
         if (event.payload.type === 'enter') {
-          setIsDraggingPdfs(event.payload.paths.some(isPdfPath));
+          setIsDraggingPdfs(event.payload.paths.some(isDocumentPath));
           return;
         }
 
@@ -3015,17 +3229,22 @@ export function AppShell() {
 
   return (
     <div className="app-shell" data-theme={appTheme}>
+      {pendingSaveRequest && (
+        <DocumentSaveDialog request={pendingSaveRequest} onChoose={resolveSaveChoice} />
+      )}
       <TopToolbar
         canExportPdf={canExportPdf}
         canRedo={canRedoWorkspaceEdit}
         canUndo={canUndoWorkspaceEdit}
         canUseWorkspaceControls={pageCount > 0}
         isAddingPdfs={isAddingPdfs}
-        isExportingPdf={isExportingPdf}
+        isExportingPdf={isExportingPdf || isSavingDocument}
         isFullscreen={isFullscreen}
         isOpeningPdf={isOpeningPdf}
         onAbout={() => setIsAboutOpen(true)}
         onExportPdf={handleExportPdf}
+        onSave={handleSaveDocument}
+        onSaveAs={handleSaveDocumentAs}
         onHelp={() => setIsShortcutHelpOpen(true)}
         onRedo={redoLastWorkspaceEdit}
         onSettings={() => setIsSettingsOpen(true)}
@@ -3039,7 +3258,7 @@ export function AppShell() {
       />
       <WorkspaceTabs
         activeWorkspaceId={activeWorkspaceId}
-        isBusy={isLoadingPdf || isExportingPdf}
+        isBusy={isLoadingPdf || isExportingPdf || isSavingDocument}
         onChangeWorkspaceColor={handleChangeWorkspaceTabColor}
         onChangeWorkspaceFont={handleChangeWorkspaceTabFont}
         onCloseWorkspace={handleCloseWorkspaceTab}
@@ -3051,10 +3270,10 @@ export function AppShell() {
       {isDraggingPdfs ? (
         <div className="drop-overlay" role="status">
           <div>
-            <strong>{workspace ? 'Choose where to open PDFs' : 'Open PDFs'}</strong>
+            <strong>Open PDF or PaperDesk documents</strong>
             <span>
               {workspace
-                ? 'Drop to add them to an open workspace or start a new one.'
+                ? 'PDFs can join an open workspace. PaperDesk documents open in their own tabs.'
                 : 'Drop to open them in a new workspace.'}
             </span>
           </div>
@@ -3297,7 +3516,11 @@ export function AppShell() {
         </div>
         <span title={activeSourceFileName}>{activeSourceFileName}</span>
         <span data-unsaved={hasUnsavedChanges ? 'true' : undefined}>
-          {hasUnsavedChanges ? 'Edited' : 'Saved locally'}
+          {hasUnsavedChanges
+            ? 'Edited'
+            : activeWorkspaceTab?.saveState.filePath
+              ? 'Saved'
+              : 'Saved locally'}
         </span>
       </footer>
 
