@@ -128,7 +128,7 @@ describe('PDF renderer', () => {
     const getViewport = vi.fn(() => ({
       width: 100,
       height: 200,
-      convertToViewportRectangle: ([x1, y1, x2, y2]: number[]) => [y1, x1, y2, x2],
+      convertToViewportPoint: (x: number, y: number) => [y, x],
     }));
     pdfJsMocks.getDocument.mockReturnValue({
       promise: Promise.resolve({
