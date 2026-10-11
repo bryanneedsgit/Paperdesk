@@ -8,6 +8,7 @@ import { updatePageNote } from '../lib/notes/pageNotes';
 import { AppShell } from './AppShell';
 
 const {
+  printDocument,
   exportWorkspaceToPdfBytes,
   savePpd,
   openPpd,
@@ -19,6 +20,7 @@ const {
   saveWorkspacePdf,
   saveWorkspacePdfBytes,
 } = vi.hoisted(() => ({
+  printDocument: vi.fn(),
   exportWorkspaceToPdfBytes: vi.fn(),
   savePpd: vi.fn(),
   openPpd: vi.fn(),
@@ -30,6 +32,8 @@ const {
   saveWorkspacePdf: vi.fn(),
   saveWorkspacePdfBytes: vi.fn(),
 }));
+
+vi.mock('../lib/print/printDocument', () => ({ printDocument }));
 
 vi.mock('../lib/project/ppdFiles', () => ({ savePpd, openPpd }));
 
@@ -187,6 +191,7 @@ describe('AppShell PDF opening', () => {
       }),
     );
 
+    printDocument.mockReset().mockResolvedValue('cancelled');
     savePpd.mockReset().mockResolvedValue('/tmp/notes.ppd');
     openPpd.mockReset();
     pickPdfPath.mockReset();
@@ -217,6 +222,59 @@ describe('AppShell PDF opening', () => {
     cleanup();
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  it('disables printing without a document and guards duplicate toolbar/shortcut requests', async () => {
+    render(<AppShell />);
+    expect((screen.getByRole('button', { name: 'Print…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    const document = createDocument('print', 'print.pdf', '/tmp/print.pdf');
+    pickPdfPath.mockResolvedValueOnce(document.filePath);
+    loadPdfDocumentsFromPaths.mockResolvedValueOnce([document]);
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    await screen.findByRole('tab', { name: /print\.pdf/ });
+    let finish!: (outcome: string) => void;
+    printDocument.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Print…' }));
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true });
+    expect(printDocument).toHaveBeenCalledTimes(1);
+    expect(printDocument.mock.calls[0][0].name).toBe('print.pdf');
+    await act(async () => {
+      finish('cancelled');
+    });
+    expect(screen.queryByText('Print job submitted.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Print…' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('prints the active document from the native menu and recovers after a failure', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const document = createDocument('menu-print', 'menu.pdf', '/tmp/menu.pdf');
+    pickPdfPath.mockResolvedValueOnce(document.filePath);
+    loadPdfDocumentsFromPaths.mockResolvedValueOnce([document]);
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open document' }));
+    await screen.findByRole('tab', { name: /menu\.pdf/ });
+    printDocument.mockRejectedValueOnce(new Error('Printer unavailable'));
+    const menuHandler = listen.mock.calls.find(([event]) => event === 'paperdesk://print')?.[1];
+    expect(menuHandler).toBeTypeOf('function');
+    await act(async () => {
+      menuHandler();
+    });
+    expect(await screen.findByText('Printer unavailable')).not.toBeNull();
+    expect(printDocument.mock.calls[0][0].name).toBe('menu.pdf');
+    printDocument.mockResolvedValueOnce('submitted');
+    fireEvent.click(screen.getByRole('button', { name: 'Print…' }));
+    expect(await screen.findByText('Print job submitted.')).not.toBeNull();
+    expect(printDocument).toHaveBeenCalledTimes(2);
+    errorLog.mockRestore();
   });
 
   it('prompts for a destination when another PDF is opened from the workspace tabs', async () => {
@@ -264,12 +322,12 @@ describe('AppShell PDF opening', () => {
 
       return pendingSystemPaths.splice(0, pendingSystemPaths.length);
     });
-    listen.mockImplementation(
-      () =>
-        new Promise<() => void>((resolve) => {
-          listenerRegistrations.push(() => resolve(() => undefined));
-        }),
-    );
+    listen.mockImplementation((event: string) => {
+      if (event !== 'paperdesk://open-pdfs') return Promise.resolve(() => undefined);
+      return new Promise<() => void>((resolve) => {
+        listenerRegistrations.push(() => resolve(() => undefined));
+      });
+    });
     pickPdfPath.mockResolvedValueOnce(firstDocument.filePath);
     loadPdfDocumentsFromPaths
       .mockResolvedValueOnce([firstDocument])

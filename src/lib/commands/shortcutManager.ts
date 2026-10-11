@@ -1,4 +1,5 @@
 type ShortcutHandlers = {
+  printDocument?: () => void;
   canDeletePages: () => boolean;
   canCopyAnnotation: () => boolean;
   canExportPdf: () => boolean;
@@ -41,6 +42,11 @@ export function registerWorkspaceShortcuts(handlers: ShortcutHandlers): () => vo
     const key = event.key.toLowerCase();
     const primaryModifier = hasPrimaryModifier(event);
     const editableTarget = isEditableTarget(event.target);
+
+    if (primaryModifier && key === 'p') {
+      preventAndRun(event, () => handlers.printDocument?.());
+      return;
+    }
 
     if (primaryModifier && key === 'o') {
       preventAndRun(event, handlers.openPdf);

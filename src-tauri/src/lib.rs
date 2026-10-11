@@ -6,8 +6,11 @@ use std::{
 
 use tauri::{Emitter, Manager, State};
 
+mod pdf_links;
 mod pdf_security;
 mod ppd_files;
+mod printing;
+mod tab_transfer;
 use ppd_files::{can_write_ppd_file, read_ppd_file_bytes, write_ppd_file_atomic};
 
 use pdf_security::{prepare_pdf_for_open, protect_pdf_bytes};
@@ -17,7 +20,18 @@ const OPEN_PDFS_EVENT: &str = "paperdesk://open-pdfs";
 struct PendingOpenPaths(Mutex<Vec<String>>);
 
 #[tauri::command]
-fn drain_pending_open_paths(state: State<'_, PendingOpenPaths>) -> Vec<String> {
+fn drain_pending_open_paths(
+    window: tauri::WebviewWindow,
+    state: State<'_, PendingOpenPaths>,
+) -> Vec<String> {
+    let windows = window.app_handle().webview_windows();
+    let focused = windows.values().find(|w| w.is_focused().unwrap_or(false));
+    let receiver = focused
+        .or_else(|| windows.get("main"))
+        .or_else(|| windows.values().next());
+    if receiver.is_some_and(|w| w.label() != window.label()) {
+        return Vec::new();
+    }
     let mut pending_paths = state.0.lock().expect("pending open paths mutex poisoned");
     std::mem::take(&mut *pending_paths)
 }
@@ -152,10 +166,23 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .manage(tab_transfer::TabTransfers::default())
         .manage(PendingOpenPaths(Mutex::new(startup_pdf_paths.clone())))
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .on_window_event(tab_transfer::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            printing::print_document,
+            pdf_links::open_pdf_web_link,
+            tab_transfer::move_workspace_tabs,
+            tab_transfer::receive_workspace_tabs,
+            tab_transfer::finish_workspace_tabs,
+            tab_transfer::workspace_tabs_status,
             drain_pending_open_paths,
             prepare_pdf_for_open,
             protect_pdf_bytes,
@@ -165,6 +192,33 @@ pub fn run() {
             can_write_ppd_file,
         ])
         .setup(move |app| {
+            use tauri::menu::{Menu, MenuItem, Submenu};
+            let menu = Menu::default(app.handle())?;
+            let print =
+                MenuItem::with_id(app, "print-document", "Print…", true, Some("CmdOrCtrl+P"))?;
+            // Preserve standard app/edit/window menus supplied by Tauri.
+            let file = menu.items()?.into_iter().find_map(|item| {
+                item.as_submenu()
+                    .filter(|submenu| submenu.text().ok().as_deref() == Some("File"))
+                    .cloned()
+            });
+            if let Some(file) = file {
+                file.insert(&print, 0)?;
+            } else {
+                menu.prepend(&Submenu::with_items(app, "File", true, &[&print])?)?;
+            }
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, event| {
+                if event.id().as_ref() == "print-document" {
+                    if let Some(window) = app
+                        .webview_windows()
+                        .into_values()
+                        .find(|w| w.is_focused().unwrap_or(false))
+                    {
+                        let _ = app.emit_to(window.label(), "paperdesk://print", ());
+                    }
+                }
+            });
             allow_pdf_paths(app.handle(), &startup_pdf_paths);
             Ok(())
         })

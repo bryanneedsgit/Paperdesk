@@ -1,5 +1,12 @@
 import { FilePlus2, X } from 'lucide-react';
-import { useCallback, useEffect, useState, type CSSProperties, type MouseEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from 'react';
 
 export type WorkspaceTabItem = {
   color: string;
@@ -18,6 +25,7 @@ type WorkspaceTabsProps = {
   onChangeWorkspaceFont: (workspaceId: string, fontFamily: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onOpenPdf: () => void;
+  onMoveTabs: (ids: string[], newWindow?: boolean, position?: { x: number; y: number }) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   tabs: WorkspaceTabItem[];
@@ -77,10 +85,59 @@ export function WorkspaceTabs({
   onChangeWorkspaceFont,
   onCloseWorkspace,
   onOpenPdf,
+  onMoveTabs,
   onRenameWorkspace,
   onSelectWorkspace,
   tabs,
 }: WorkspaceTabsProps) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; count: number } | null>(
+    null,
+  );
+  const anchor = useRef<string | null>(null);
+  const drag = useRef<{ x: number; y: number; ids: string[]; started: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const selection = selectedIds.filter((id) => tabs.some((tab) => tab.id === id));
+  const selected = selection.length ? selection : activeWorkspaceId ? [activeWorkspaceId] : [];
+
+  const selectTab = (id: string, event: MouseEvent<HTMLButtonElement>) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    const rangeAnchor = anchor.current ?? activeWorkspaceId;
+    if (event.shiftKey && rangeAnchor) {
+      const first = tabs.findIndex((tab) => tab.id === rangeAnchor);
+      const last = tabs.findIndex((tab) => tab.id === id);
+      setSelectedIds(
+        tabs
+          .slice(Math.max(0, Math.min(first, last)), Math.max(first, last) + 1)
+          .map((tab) => tab.id),
+      );
+    } else if (event.metaKey || event.ctrlKey) {
+      setSelectedIds(
+        selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id],
+      );
+      anchor.current = id;
+    } else {
+      setSelectedIds([id]);
+      anchor.current = id;
+    }
+    onSelectWorkspace(id);
+  };
+
+  useEffect(() => {
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (drag.current?.started) suppressClick.current = true;
+        drag.current = null;
+        setDragPreview(null);
+      }
+    };
+    window.addEventListener('keydown', cancel);
+    return () => window.removeEventListener('keydown', cancel);
+  }, []);
+
   const [contextMenu, setContextMenu] = useState<WorkspaceTabContextMenu | null>(null);
 
   const commitContextMenuName = useCallback(
@@ -145,6 +202,7 @@ export function WorkspaceTabs({
               <div
                 className="workspace-tab-item"
                 data-active={isActive ? 'true' : undefined}
+                data-selected={selected.includes(tab.id) ? 'true' : undefined}
                 key={tab.id}
                 onContextMenu={(event) => openContextMenu(tab, event)}
                 style={
@@ -157,9 +215,60 @@ export function WorkspaceTabs({
                 <button
                   aria-selected={isActive}
                   className="workspace-tab-button"
-                  onClick={() => onSelectWorkspace(tab.id)}
+                  disabled={isBusy}
+                  onClick={(event) => selectTab(tab.id, event)}
+                  onPointerDown={(event) => {
+                    if (isBusy || event.button !== 0) return;
+                    suppressClick.current = false;
+                    drag.current = {
+                      x: event.clientX,
+                      y: event.clientY,
+                      ids: selected.includes(tab.id) ? selected : [tab.id],
+                      started: false,
+                    };
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    const current = drag.current;
+                    if (!current) return;
+                    if (
+                      !current.started &&
+                      Math.hypot(event.clientX - current.x, event.clientY - current.y) < 8
+                    )
+                      return;
+                    current.started = true;
+                    setSelectedIds(current.ids);
+                    setDragPreview({
+                      x: event.clientX,
+                      y: event.clientY,
+                      count: current.ids.length,
+                    });
+                  }}
+                  onPointerUp={(event) => {
+                    const current = drag.current;
+                    drag.current = null;
+                    setDragPreview(null);
+                    if (!current?.started) return;
+                    suppressClick.current = true;
+                    if (
+                      event.clientX < 0 ||
+                      event.clientY < 0 ||
+                      event.clientX >= window.innerWidth ||
+                      event.clientY >= window.innerHeight
+                    ) {
+                      onMoveTabs(current.ids, false, { x: event.clientX, y: event.clientY });
+                    }
+                  }}
+                  onLostPointerCapture={() => {
+                    drag.current = null;
+                    setDragPreview(null);
+                  }}
+                  onPointerCancel={() => {
+                    drag.current = null;
+                    setDragPreview(null);
+                  }}
                   role="tab"
-                  title={`${tab.name} - ${getTabMeta(tab)}`}
+                  title={`${tab.name} - ${getTabMeta(tab)}. Drag outside this window to move. Ctrl/Cmd-click or Shift-click to select multiple tabs.`}
                   type="button"
                 >
                   <span className="workspace-tab-title">
@@ -186,6 +295,16 @@ export function WorkspaceTabs({
           <span className="workspace-tabs-empty">No workspace open</span>
         )}
       </div>
+      {dragPreview ? (
+        <div
+          className="workspace-tab-drag-preview"
+          role="status"
+          style={{ left: dragPreview.x + 12, top: dragPreview.y + 12 }}
+        >
+          {dragPreview.count} {dragPreview.count === 1 ? 'tab' : 'tabs'} · Drag outside this window
+          to move
+        </div>
+      ) : null}
       {contextMenu && contextMenuTab ? (
         <section
           aria-label={`Edit ${contextMenuTab.name} tab`}
@@ -195,6 +314,22 @@ export function WorkspaceTabs({
           role="dialog"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          <button
+            type="button"
+            className="workspace-tab-move"
+            disabled={isBusy}
+            onClick={() => {
+              const ids = selected.includes(contextMenuTab.id) ? selected : [contextMenuTab.id];
+              closeContextMenu();
+              onMoveTabs(ids, true);
+            }}
+          >
+            Move{' '}
+            {selected.includes(contextMenuTab.id) && selected.length > 1
+              ? `${selected.length} tabs`
+              : 'tab'}{' '}
+            to new window
+          </button>
           <label>
             <span>Name</span>
             <input

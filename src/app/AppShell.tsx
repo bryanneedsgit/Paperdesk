@@ -1,3 +1,6 @@
+import { useWorkspaceTransfer } from '../lib/windows/useWorkspaceTransfer';
+import type { WorkspaceTab } from '../lib/windows/workspaceTransfer';
+import { printDocument } from '../lib/print/printDocument';
 import { flushSync } from 'react-dom';
 import {
   DocumentSaveDialog,
@@ -206,14 +209,6 @@ type PageNotesUiState = {
   height: number;
   isFocusMode: boolean;
   isOpen: boolean;
-};
-
-type WorkspaceTab = {
-  saveState: DocumentSaveState;
-  color?: string;
-  fontFamily?: string;
-  history: WorkspaceHistoryState;
-  id: string;
 };
 
 type PendingPdfImportSource = 'drop' | 'file-picker' | 'os-open' | 'recent';
@@ -518,6 +513,9 @@ export function AppShell() {
   const [isAddingPdfs, setIsAddingPdfs] = useState(false);
   const [isDraggingPdfs, setIsDraggingPdfs] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const printInFlight = useRef(false);
+  const printHandlerRef = useRef<() => void>(() => {});
   const [exportModalMode, setExportModalMode] = useState<ExportPagesModalMode | null>(null);
   const [workspaceToast, setWorkspaceToast] = useState<WorkspaceToast | null>(null);
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanelId>('document');
@@ -669,6 +667,45 @@ export function AppShell() {
     !isProtectedExportChoiceOpen &&
     !isDeckNotesExportOpen &&
     !exportModalMode;
+  const { moveTabs, isTransferring, transferLocked } = useWorkspaceTransfer({
+    isBusy:
+      isLoadingPdf ||
+      isExportingPdf ||
+      isPrinting ||
+      isSavingDocument ||
+      isRecoveringWorkspace ||
+      isExportingDeckNotes ||
+      Boolean(
+        pendingSaveRequest ||
+        pendingPdfImportRequest ||
+        pendingPdfPasswordRequest ||
+        isProtectedExportChoiceOpen ||
+        exportModalMode,
+      ),
+    getTabs: () => workspaceTabsRef.current,
+    passwords: documentPasswordsRef.current,
+    receive: (tabs) => {
+      setWorkspaceTabs((current) => [...current, ...tabs]);
+      setActiveWorkspaceId(tabs[0].id);
+      setRecoverySnapshot(null);
+    },
+    remove: (ids) => {
+      if (workspaceTabsRef.current.every((tab) => ids.includes(tab.id))) clearAutosavedWorkspace();
+      setWorkspaceTabs((current) => current.filter((tab) => !ids.includes(tab.id)));
+    },
+    onError: (message) => setWorkspaceToast({ id: crypto.randomUUID(), message, tone: 'error' }),
+  });
+
+  useEffect(() => {
+    if (!isTransferring) return;
+    const blockKeys = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', blockKeys, true);
+    return () => window.removeEventListener('keydown', blockKeys, true);
+  }, [isTransferring]);
+
   const selectedAnnotation = useMemo(
     () => workspace?.annotations.find((annotation) => annotation.id === selectedAnnotationId),
     [selectedAnnotationId, workspace?.annotations],
@@ -1801,6 +1838,56 @@ export function AppShell() {
     [requestNewPdfPassword, requestProtectedExportChoice, showErrorToast, showToast],
   );
 
+  const handlePrint = useCallback(async () => {
+    if (
+      transferLocked.current ||
+      printInFlight.current ||
+      !workspace ||
+      !canExportPdf ||
+      isLoadingPdf ||
+      pendingSaveRequest
+    )
+      return;
+    printInFlight.current = true;
+    setIsPrinting(true);
+    showToast('Preparing document for printing…', 'info');
+    try {
+      const result = await printDocument(workspace);
+      if (result === 'submitted') showToast('Print job submitted.', 'success');
+      else
+        setWorkspaceToast((toast) =>
+          toast?.message === 'Preparing document for printing…' ? null : toast,
+        );
+    } catch (error) {
+      logDeveloperError('Print failed.', error);
+      showToast(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      printInFlight.current = false;
+      setIsPrinting(false);
+    }
+  }, [workspace, canExportPdf, isLoadingPdf, pendingSaveRequest, showToast, transferLocked]);
+
+  useEffect(() => {
+    printHandlerRef.current = () => {
+      void handlePrint();
+    };
+  }, [handlePrint]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen('paperdesk://print', () => printHandlerRef.current())
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((error) => logDeveloperError('Unable to register the Print menu command.', error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const handleExportPdf = useCallback(() => {
     flushPageNotes();
     const tab = workspaceTabsRef.current.find((tab) => tab.id === activeWorkspaceId);
@@ -1908,7 +1995,7 @@ export function AppShell() {
 
   const handleCloseWorkspaceTab = useCallback(
     async (tabId: string) => {
-      if (closeInProgressRef.current || saveInProgressRef.current) return;
+      if (closeInProgressRef.current || saveInProgressRef.current || transferLocked.current) return;
       closeInProgressRef.current = true;
       try {
         if (!(await confirmCloseTab(tabId))) return;
@@ -1930,14 +2017,14 @@ export function AppShell() {
         closeInProgressRef.current = false;
       }
     },
-    [confirmCloseTab],
+    [confirmCloseTab, transferLocked],
   );
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
     const unlisten = appWindow.onCloseRequested(async (event) => {
       event.preventDefault();
-      if (closeInProgressRef.current || saveInProgressRef.current) return;
+      if (closeInProgressRef.current || saveInProgressRef.current || transferLocked.current) return;
       closeInProgressRef.current = true;
       try {
         for (const tab of workspaceTabsRef.current) {
@@ -1952,7 +2039,7 @@ export function AppShell() {
     return () => {
       void unlisten.then((dispose) => dispose());
     };
-  }, [confirmCloseTab]);
+  }, [confirmCloseTab, transferLocked]);
 
   const handleExportDeckNotes = useCallback(
     async (options: DeckNotesExportOptions) => {
@@ -3020,6 +3107,9 @@ export function AppShell() {
 
   useEffect(() => {
     return registerWorkspaceShortcuts({
+      printDocument: () => {
+        void handlePrint();
+      },
       canCopyAnnotation: () => canCopySelectedFreehandAnnotation,
       canDeletePages: () => Boolean(selectedAnnotationId || selectedVisiblePageIds.length),
       canExportPdf: () =>
@@ -3046,6 +3136,7 @@ export function AppShell() {
     });
   }, [
     activePageIndex,
+    handlePrint,
     canCopySelectedFreehandAnnotation,
     canPasteFreehandAnnotation,
     handleCopySelectedFreehandAnnotation,
@@ -3228,11 +3319,26 @@ export function AppShell() {
   }, [clearSelection, openFindBar, workspace?.selectedPageIds.length]);
 
   return (
-    <div className="app-shell" data-theme={appTheme}>
+    <div
+      className="app-shell"
+      data-theme={appTheme}
+      aria-busy={isTransferring}
+      {...(isTransferring ? { inert: '' } : {})}
+    >
+      {isTransferring ? (
+        <div className="tab-transfer-overlay" role="status">
+          Moving tabs…
+        </div>
+      ) : null}
       {pendingSaveRequest && (
         <DocumentSaveDialog request={pendingSaveRequest} onChoose={resolveSaveChoice} />
       )}
       <TopToolbar
+        isPrinting={isPrinting}
+        canPrint={canExportPdf && !isLoadingPdf && !isPrinting && !pendingSaveRequest}
+        onPrint={() => {
+          void handlePrint();
+        }}
         canExportPdf={canExportPdf}
         canRedo={canRedoWorkspaceEdit}
         canUndo={canUndoWorkspaceEdit}
@@ -3259,6 +3365,7 @@ export function AppShell() {
       <WorkspaceTabs
         activeWorkspaceId={activeWorkspaceId}
         isBusy={isLoadingPdf || isExportingPdf || isSavingDocument}
+        onMoveTabs={moveTabs}
         onChangeWorkspaceColor={handleChangeWorkspaceTabColor}
         onChangeWorkspaceFont={handleChangeWorkspaceTabFont}
         onCloseWorkspace={handleCloseWorkspaceTab}

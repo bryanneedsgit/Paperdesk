@@ -1,3 +1,4 @@
+import { PdfLinkLayer } from './PdfLinkLayer';
 import {
   useCallback,
   useEffect,
@@ -1313,6 +1314,14 @@ export function PdfViewer({
                 shouldCreateComment={isAnnotating && activeAnnotationTool === 'text-note'}
                 shouldCreateTextEdit={isAnnotating && activeAnnotationTool === 'edit-text'}
                 textBoxes={embeddedTextBoxes}
+              />
+            ) : null}
+            {pageSize && sourceDocument ? (
+              <PdfLinkLayer
+                disabled={isAnnotating}
+                page={activePage}
+                scale={sourceRenderScale}
+                sourceDocument={sourceDocument}
               />
             ) : null}
             {pageSize && sourceDocument ? (

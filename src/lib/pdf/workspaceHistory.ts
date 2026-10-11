@@ -194,3 +194,30 @@ export function canUndoWorkspaceHistory(history: WorkspaceHistoryState | null): 
 export function canRedoWorkspaceHistory(history: WorkspaceHistoryState | null): boolean {
   return Boolean(history?.future.length);
 }
+
+/** Include sources referenced only by undo/redo, not just the currently visible documents. */
+export function getWorkspaceHistorySources(
+  histories: WorkspaceHistoryState[],
+): [string, Uint8Array][] {
+  const ids = new Set<string>();
+  for (const history of histories) {
+    registerSourceDocumentBytes(history.present);
+    for (const snapshot of [...history.past, history.present, ...history.future]) {
+      snapshot.documents.forEach((document) => ids.add(document.id));
+    }
+  }
+  return [...ids].map((id) => {
+    const bytes = sourceDocumentBytesById.get(id);
+    if (!bytes) throw new Error(`Missing PDF source for ${id}.`);
+    return [id, bytes];
+  });
+}
+
+export function registerWorkspaceHistorySources(sources: [string, Uint8Array][]): void {
+  for (const [id, bytes] of sources) {
+    if (typeof id !== 'string' || !(bytes instanceof Uint8Array)) {
+      throw new Error('Invalid PDF source in workspace transfer.');
+    }
+  }
+  for (const [id, bytes] of sources) sourceDocumentBytesById.set(id, bytes);
+}

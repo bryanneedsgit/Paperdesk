@@ -134,3 +134,18 @@ describe('registerWorkspaceShortcuts clipboard annotations', () => {
     unregister();
   });
 });
+
+describe('print shortcut', () => {
+  it.each(['metaKey', 'ctrlKey'])(
+    'prints once with %s+P and prevents webview printing',
+    (modifier) => {
+      const printDocument = vi.fn();
+      const unregister = registerWorkspaceShortcuts(createHandlers({ printDocument }));
+      const event = new KeyboardEvent('keydown', { key: 'p', [modifier]: true, cancelable: true });
+      window.dispatchEvent(event);
+      unregister();
+      expect(printDocument).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBe(true);
+    },
+  );
+});
