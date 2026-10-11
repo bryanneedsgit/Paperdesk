@@ -435,6 +435,8 @@ export function DocumentViewer({
         return;
       }
 
+      if (event.target instanceof Element && event.target.closest('.pdf-web-link, .pdf-link-error'))
+        return;
       event.preventDefault();
       event.stopPropagation();
 

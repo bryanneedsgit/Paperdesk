@@ -28,9 +28,11 @@ export const featureGuideSections: FeatureGuideSection[] = [
     steps: [
       'Open one or more PDFs from the top toolbar.',
       'Use tabs to switch between active workspaces.',
+      'Drag a tab outside the window to create a new window, or onto another Paperdesk window to move it there.',
       'Drop more PDFs into the app when you want to add or open another workspace.',
     ],
     tips: [
+      'Ctrl/Cmd-click tabs to select several, or Shift-click to select a range, then drag them together. Right-click a tab for Move to new window.',
       'Recent files and autosave can be managed in Settings.',
       'If a recovered source file is missing, relink it from the recovery prompt.',
     ],
@@ -188,12 +190,32 @@ export const featureGuideSections: FeatureGuideSection[] = [
     ],
   },
   {
+    id: 'printing',
+    title: 'Printing',
+    summary: 'Print the edited document through the native macOS or Windows print dialog.',
+    steps: [
+      'Choose Print from the toolbar or File menu, or press Ctrl/Cmd+P.',
+      'Open PaperDesk Pages inside the print dialog and choose all pages, the current page, selected thumbnails, or a custom range.',
+      'Choose All, Odd pages only, or Even pages only beside the page-selection controls.',
+      'Optionally reverse the order or turn off Include annotations, then choose your printer settings and print.',
+    ],
+    tips: [
+      'Ranges use the current document order, starting at 1. For example, 2–7 with Odd pages only prints 3, 5, and 7.',
+      'Printing includes unsaved edits and filled forms. It does not change or save your document.',
+      'Include annotations controls PaperDesk overlays; source PDF content remains. Page notes are not printed.',
+      'Native Paper Handling options act on sheets after PaperDesk selects document pages; leave those at All and Normal unless you also want sheet filtering.',
+      'Windows uses its native dialog and raster output at up to 300 DPI; macOS retains PDF text and vector content.',
+    ],
+    screenshots: [],
+  },
+  {
     id: 'shortcuts',
     title: 'Shortcuts',
     summary:
       'Use keyboard shortcuts for repeated open, export, navigation, undo, and delete actions.',
     steps: [],
     shortcuts: [
+      { action: 'Print document', keystroke: 'Ctrl/Cmd+P' },
       {
         action: 'Open a PDF or PaperDesk document',
         keystroke: 'Ctrl/Cmd + O',

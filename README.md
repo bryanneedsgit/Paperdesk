@@ -17,9 +17,11 @@ The app is designed for local page-level PDF workflows. It does not upload PDFs 
 ## Features
 
 - Open local PDFs without uploading or syncing files.
+- Click embedded HTTP/HTTPS hyperlinks to open them in your default browser.
 - Save portable `.ppd` documents containing source PDFs, editable changes, and page notes.
 - Open supported password-protected PDFs with session-only passwords.
 - Merge multiple PDFs into one editable workspace.
+- Drag tabs outside a window to create another window, or onto another Paperdesk window to move them. Ctrl/Cmd-click selects multiple tabs; Shift-click selects a range. Right-click a tab for **Move to new window**.
 - Open a scrollable four-column thumbnail overview for each PDF workspace, with source filenames and bookmark markers.
 - Bookmark workspace pages and jump back to them from the sidebar.
 - Select, delete, rearrange, and rotate pages before export.
@@ -28,6 +30,7 @@ The app is designed for local page-level PDF workflows. It does not upload PDFs 
 - Add exportable text, highlight, shape, pen, and signature annotations.
 - Undo and redo major workspace edits.
 - Export the final edited workspace as a new local PDF.
+- Print through native macOS/Windows dialogs with ranges, odd/even pages, reverse order, and an annotation toggle.
 - Save unlocked copies or create password-protected AES-256 copies.
 
 ## Usage Guide
@@ -50,6 +53,14 @@ Use **Save** (Ctrl/Cmd+S) to save the current document. If it is a PDF with none
 A `.ppd` file contains the source PDFs and editable workspace data, so it can be moved or shared without the originals. Open it through **Open document**, recent files, drag and drop, or the system file association. Subsequent saves update the same `.ppd`; **Save As** (Ctrl/Cmd+Shift+S) chooses another location. Clearing the notes in an existing `.ppd` keeps its format.
 
 Version 1 uses a ZIP container with `manifest.json` and `sources/<index>.pdf`. The manifest records format `paperdesk` and version `1`. Files are limited to 512 MB total and 32 MB of metadata. Passwords and undo history are excluded. These files are unencrypted; saving from a protected PDF requires confirmation.
+
+### Printing
+
+Choose **Print…** in the toolbar or File menu, or press **Ctrl/Cmd+P**. In the native dialog, open **PaperDesk Pages** to choose all pages, the current page, selected thumbnails, or a range such as `1–3, 7, 10–12`. **All / Odd / Even** refers to positions in the edited document, starting at 1. Range `2–7` with Odd prints `3, 5, 7`; Reverse order produces `7, 5, 3`.
+
+Printing includes unsaved edits and filled forms without saving the document. **Include annotations** controls PaperDesk overlays, while source PDF content remains. Page notes are excluded. Printer settings remain in the same native dialog. Native sheet handling is separate from PaperDesk's document-page filter; leave it at All/Normal unless you intend both filters.
+
+macOS uses an AppKit print panel with native preview and PDF text/vector output. Windows uses a native Print property sheet and renders one page at a time at up to 300 DPI (32-megapixel cap). Windows requires the MSVC toolchain and Windows SDK including C++/WinRT headers. Printing is available only in the desktop app.
 
 ## Requirements
 

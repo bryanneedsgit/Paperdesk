@@ -1,5 +1,6 @@
 import {
   Download,
+  Printer,
   Save,
   SaveAll,
   HelpCircle,
@@ -18,6 +19,9 @@ import { useEffect, useState } from 'react';
 import type { PdfWorkspace } from '../../lib/pdf/types';
 
 type TopToolbarProps = {
+  canPrint: boolean;
+  isPrinting: boolean;
+  onPrint: () => void;
   canExportPdf: boolean;
   canRedo: boolean;
   canUndo: boolean;
@@ -66,16 +70,19 @@ function getWorkspaceMeta(workspace: PdfWorkspace): string {
 function IconToolbarButton({
   children,
   disabled,
+  busy,
   label,
   onClick,
 }: {
   children: ReactNode;
   disabled?: boolean;
+  busy?: boolean;
   label: string;
   onClick: () => void;
 }) {
   return (
     <button
+      aria-busy={busy}
       aria-label={label}
       className="toolbar-icon-button"
       data-tooltip={label}
@@ -89,6 +96,9 @@ function IconToolbarButton({
 }
 
 export function TopToolbar({
+  canPrint,
+  isPrinting,
+  onPrint,
   canExportPdf,
   canRedo,
   canUndo,
@@ -160,6 +170,14 @@ export function TopToolbar({
           >
             <Download size={16} />
           </button>
+          <IconToolbarButton
+            busy={isPrinting}
+            disabled={!canPrint}
+            label="Print…"
+            onClick={onPrint}
+          >
+            <Printer size={16} />
+          </IconToolbarButton>
           <span className="toolbar-separator" aria-hidden="true" />
           <IconToolbarButton disabled={isBusy || !canUndo} label="Undo" onClick={onUndo}>
             <Undo2 size={16} />

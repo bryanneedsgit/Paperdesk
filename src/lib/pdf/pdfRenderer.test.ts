@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearPdfDocumentCache,
+  getPdfPageWebLinks,
   renderPdfPageTextLayer,
   type PdfTextLayerItem,
 } from './pdfRenderer';
@@ -122,5 +123,27 @@ describe('PDF renderer', () => {
     expect(spans[0].style.fontSize).toBe('20px');
     expect(spans[0].style.getPropertyValue('--rotate')).toBe('');
     expect(spans[1].style.left).toBe('120px');
+  });
+  it('extracts external link annotations using intrinsic and workspace rotation', async () => {
+    const getViewport = vi.fn(() => ({
+      width: 100,
+      height: 200,
+      convertToViewportRectangle: ([x1, y1, x2, y2]: number[]) => [y1, x1, y2, x2],
+    }));
+    pdfJsMocks.getDocument.mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        getPage: async () => ({
+          rotate: 90,
+          getViewport,
+          getAnnotations: async () => [
+            { subtype: 'Link', url: 'https://example.org', rect: [10, 20, 30, 40] },
+          ],
+        }),
+      }),
+    });
+    const links = await getPdfPageWebLinks(sourceDocument, { ...sourcePage, rotation: 90 });
+    expect(getViewport).toHaveBeenCalledWith({ scale: 1, rotation: 180 });
+    expect(links[0].rect).toEqual({ x: 20, y: 10, width: 20, height: 20 });
   });
 });

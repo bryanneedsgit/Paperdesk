@@ -1,6 +1,16 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { DocumentSaveState } from '../project/documentSaveState';
 import type { PdfDocumentSource, PdfPageItem, PdfWorkspace } from '../pdf/types';
 import { normalizePageNotes } from '../notes/pageNotes';
+
+function windowStorageKey(key: string): string {
+  try {
+    const label = getCurrentWindow().label;
+    return label && label !== 'main' ? `${key}.${label}` : key;
+  } catch {
+    return key;
+  }
+}
 
 const workspaceAutosaveKey = 'paperdesk.workspaceAutosave.v1';
 const workspaceStorageSettingsKey = 'paperdesk.storageSettings.v1';
@@ -141,7 +151,7 @@ export function writeWorkspaceStorageSettings(settings: WorkspaceStorageSettings
 }
 
 export function readAutosavedWorkspace(): AutosavedWorkspaceSnapshot | null {
-  const rawValue = window.localStorage.getItem(workspaceAutosaveKey);
+  const rawValue = window.localStorage.getItem(windowStorageKey(workspaceAutosaveKey));
 
   if (!rawValue) {
     return null;
@@ -161,13 +171,13 @@ export function writeAutosavedWorkspace(
   documentSaveState?: DocumentSaveState,
 ): void {
   window.localStorage.setItem(
-    workspaceAutosaveKey,
+    windowStorageKey(workspaceAutosaveKey),
     JSON.stringify(createAutosavedWorkspaceSnapshot(workspace, documentSaveState)),
   );
 }
 
 export function clearAutosavedWorkspace(): void {
-  window.localStorage.removeItem(workspaceAutosaveKey);
+  window.localStorage.removeItem(windowStorageKey(workspaceAutosaveKey));
   void clearAutosavedWorkspaceSources();
 }
 
@@ -211,7 +221,7 @@ export function createWorkspaceFromAutosave(
 
 function openWorkspaceSourceDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(workspaceSourceDbName, 1);
+    const request = window.indexedDB.open(windowStorageKey(workspaceSourceDbName), 1);
 
     request.onupgradeneeded = () => {
       const database = request.result;

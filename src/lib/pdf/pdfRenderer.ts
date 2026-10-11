@@ -1,3 +1,4 @@
+import { mapPdfWebLinks, type PdfWebLink } from './pdfLinks';
 import { ensurePdfJsWorker, pdfjsLib } from './pdfJs';
 import { mapWidgetAnnotationsToFormWidgets, type PdfFormWidget } from './pdfFormWidgets';
 import type { PdfDocumentSource, PdfPageItem } from './types';
@@ -249,6 +250,20 @@ export async function getPdfPageFontRawName(
   } catch {
     return null;
   }
+}
+
+export async function getPdfPageWebLinks(
+  sourceDocument: PdfDocumentSource,
+  page: PdfPageItem,
+): Promise<PdfWebLink[]> {
+  const pdfPage = await getPdfPage(sourceDocument, page);
+  const viewport = pdfPage.getViewport({ scale: 1, rotation: getRenderRotation(pdfPage, page) });
+  return mapPdfWebLinks(
+    await pdfPage.getAnnotations(),
+    (rect) => viewport.convertToViewportRectangle(rect),
+    viewport.width,
+    viewport.height,
+  );
 }
 
 export async function getPdfPageFormWidgets(
