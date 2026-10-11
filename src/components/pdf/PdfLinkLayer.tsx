@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logDeveloperError } from '../../lib/utils/errors';
 import { getPdfPageWebLinks } from '../../lib/pdf/pdfRenderer';
 import type { PdfWebLink } from '../../lib/pdf/pdfLinks';
 import type { PdfDocumentSource, PdfPageItem } from '../../lib/pdf/types';
@@ -25,8 +26,11 @@ export function PdfLinkLayer({ disabled, page, scale, sourceDocument }: Props) {
       .then((links) => {
         if (!disposed) setResult({ page, source: sourceDocument, links });
       })
-      .catch(() => {
-        if (!disposed) setError('Links on this page could not be loaded.');
+      .catch((error: unknown) => {
+        if (!disposed) {
+          logDeveloperError('Unable to load PDF page links.', error);
+          setError('Links on this page could not be loaded.');
+        }
       });
     return () => {
       disposed = true;

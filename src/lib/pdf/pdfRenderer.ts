@@ -1,3 +1,4 @@
+import type { PDFPageProxy } from 'pdfjs-dist';
 import { mapPdfWebLinks, type PdfWebLink } from './pdfLinks';
 import { ensurePdfJsWorker, pdfjsLib } from './pdfJs';
 import { mapWidgetAnnotationsToFormWidgets, type PdfFormWidget } from './pdfFormWidgets';
@@ -8,19 +9,14 @@ import {
   type EmbeddedTextItem,
 } from './embeddedText';
 
-type PdfViewport = {
-  convertToViewportRectangle(rect: number[]): number[];
-  height: number;
-  rawDims: {
-    pageHeight: number;
-    pageWidth: number;
-    pageX: number;
-    pageY: number;
-  };
-  scale: number;
-  transform: number[];
-  width: number;
-};
+type PdfViewport = ReturnType<PDFPageProxy['getViewport']>;
+
+function toViewportRectangle(viewport: PdfViewport, rect: number[]): number[] {
+  return [
+    ...viewport.convertToViewportPoint(rect[0], rect[1]),
+    ...viewport.convertToViewportPoint(rect[2], rect[3]),
+  ];
+}
 
 // pdf.js AnnotationMode.ENABLE_FORMS: interactive form widgets are excluded
 // from the canvas so they can be rendered as live HTML controls instead.
@@ -260,7 +256,7 @@ export async function getPdfPageWebLinks(
   const viewport = pdfPage.getViewport({ scale: 1, rotation: getRenderRotation(pdfPage, page) });
   return mapPdfWebLinks(
     await pdfPage.getAnnotations(),
-    (rect) => viewport.convertToViewportRectangle(rect),
+    (rect) => toViewportRectangle(viewport, rect),
     viewport.width,
     viewport.height,
   );
@@ -275,7 +271,7 @@ export async function getPdfPageFormWidgets(
   const annotations = await pdfPage.getAnnotations();
 
   return mapWidgetAnnotationsToFormWidgets(annotations, (rect) => {
-    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(rect);
+    const [x1, y1, x2, y2] = toViewportRectangle(viewport, rect);
 
     return {
       x: Math.min(x1, x2),
