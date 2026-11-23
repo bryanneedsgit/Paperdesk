@@ -14,28 +14,50 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-function countMatches(text: string, query: string): number {
-  return findMatchIndexes(text, query).length;
-}
+export type TextMatch = { start: number; end: number };
 
-function findMatchIndexes(text: string, query: string): number[] {
-  if (!query) {
-    return [];
+// Retain source offsets even when whitespace or case folding changes lengths.
+export function findTextMatches(text: string, rawQuery: string, exact = false): TextMatch[] {
+  const query = normalizeText(rawQuery).toLowerCase();
+  if (!query) return [];
+  function mapped(compact: boolean) {
+    let value = '';
+    const starts: number[] = [];
+    const ends: number[] = [];
+    let offset = 0;
+    for (const character of text) {
+      const start = offset;
+      offset += character.length;
+      const whitespace = /\s/u.test(character);
+      if (whitespace && compact) continue;
+      if (whitespace && value.endsWith(' ')) {
+        ends[ends.length - 1] = offset;
+        continue;
+      }
+      const folded = whitespace ? ' ' : character.toLowerCase();
+      value += folded;
+      for (let i = 0; i < folded.length; i++) {
+        starts.push(start);
+        ends.push(offset);
+      }
+    }
+    return { value, starts, ends };
   }
-
-  const indexes: number[] = [];
-  let nextIndex = text.indexOf(query);
-
-  while (nextIndex >= 0) {
-    indexes.push(nextIndex);
-    nextIndex = text.indexOf(query, nextIndex + query.length);
+  function search(compact: boolean): TextMatch[] {
+    const { value, starts, ends } = mapped(compact);
+    const needle = compact ? query.replace(/\s+/g, '') : query;
+    if (!needle) return [];
+    const matches: TextMatch[] = [];
+    for (let i = value.indexOf(needle); i >= 0; i = value.indexOf(needle, i + needle.length)) {
+      const before = Array.from(value.slice(0, i)).at(-1) ?? '';
+      const after = Array.from(value.slice(i + needle.length))[0] ?? '';
+      if (exact && (/[\p{L}\p{N}_]/u.test(before) || /[\p{L}\p{N}_]/u.test(after))) continue;
+      matches.push({ start: starts[i], end: ends[i + needle.length - 1] });
+    }
+    return matches;
   }
-
-  return indexes;
-}
-
-function removeSearchSpacing(value: string): string {
-  return value.replace(/\s+/g, '');
+  const direct = search(false);
+  return direct.length || exact ? direct : search(true);
 }
 
 function createSnippet(text: string, matchIndex: number, queryLength: number): string {
@@ -54,11 +76,11 @@ function createSnippet(text: string, matchIndex: number, queryLength: number): s
 export async function searchWorkspaceText(
   workspace: PdfWorkspace,
   rawQuery: string,
+  options: { exact?: boolean } = {},
 ): Promise<PdfTextSearchResult[]> {
   const query = normalizeText(rawQuery).toLowerCase();
-  const compactQuery = removeSearchSpacing(query);
 
-  if (!query || !compactQuery) {
+  if (!query) {
     return [];
   }
 
@@ -94,35 +116,15 @@ export async function searchWorkspaceText(
             .map((item) => ('str' in item && typeof item.str === 'string' ? item.str : ''))
             .join(' '),
         );
-        const lowerPageText = pageText.toLowerCase();
-        const directMatchIndexes = findMatchIndexes(lowerPageText, query);
-
-        if (directMatchIndexes.length > 0) {
-          directMatchIndexes.forEach((pageTextMatchIndex, pageMatchIndex) => {
-            results.push({
-              matchIndex,
-              pageId: pageItem.id,
-              pageMatchIndex,
-              pageNumber: pageItem.displayIndex,
-              snippet: createSnippet(pageText, pageTextMatchIndex, query.length),
-            });
-            matchIndex += 1;
-          });
-          continue;
-        }
-
-        const compactMatchCount = countMatches(removeSearchSpacing(lowerPageText), compactQuery);
-
-        for (let pageMatchIndex = 0; pageMatchIndex < compactMatchCount; pageMatchIndex += 1) {
+        findTextMatches(pageText, query, options.exact).forEach((match, pageMatchIndex) => {
           results.push({
-            matchIndex,
+            matchIndex: matchIndex++,
             pageId: pageItem.id,
             pageMatchIndex,
             pageNumber: pageItem.displayIndex,
-            snippet: pageText.slice(0, 96),
+            snippet: createSnippet(pageText, match.start, match.end - match.start),
           });
-          matchIndex += 1;
-        }
+        });
       }
     } finally {
       await loadingTask.destroy().catch(() => undefined);

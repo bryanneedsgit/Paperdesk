@@ -64,6 +64,7 @@ type DocumentViewerProps = {
   } | null;
   textSearchActiveResult?: PdfTextSearchResult | null;
   textSearchQuery?: string;
+  textSearchExact?: boolean;
   workspace: PdfWorkspace | null;
 };
 
@@ -209,6 +210,7 @@ export function DocumentViewer({
   signatureImage,
   textSearchActiveResult,
   textSearchQuery,
+  textSearchExact,
   workspace,
 }: DocumentViewerProps) {
   const viewerRef = useRef<HTMLElement | null>(null);
@@ -719,6 +721,7 @@ export function DocumentViewer({
           signatureImage={signatureImage}
           textSearchActiveResult={textSearchActiveResult}
           textSearchQuery={textSearchQuery}
+          textSearchExact={textSearchExact}
           workspace={workspace}
         />
       </section>

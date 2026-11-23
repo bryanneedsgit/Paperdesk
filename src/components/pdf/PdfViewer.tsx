@@ -63,7 +63,7 @@ import type {
   PdfPageItem,
   PdfWorkspace,
 } from '../../lib/pdf/types';
-import type { PdfTextSearchResult } from '../../lib/pdf/pdfTextSearch';
+import { findTextMatches, type PdfTextSearchResult } from '../../lib/pdf/pdfTextSearch';
 
 const fitWidthHorizontalPadding = 72;
 const maxRenderScale = 4;
@@ -103,6 +103,7 @@ type PdfViewerProps = {
   } | null;
   textSearchActiveResult?: PdfTextSearchResult | null;
   textSearchQuery?: string;
+  textSearchExact?: boolean;
   workspace: PdfWorkspace;
 };
 
@@ -375,22 +376,6 @@ function getWordAtClientPoint(
   }
 
   return null;
-}
-
-function countTextOccurrences(text: string, query: string): number {
-  if (!query) {
-    return 0;
-  }
-
-  let count = 0;
-  let nextIndex = text.indexOf(query);
-
-  while (nextIndex >= 0) {
-    count += 1;
-    nextIndex = text.indexOf(query, nextIndex + query.length);
-  }
-
-  return count;
 }
 
 function PdfTextLayer({
@@ -814,6 +799,7 @@ export function PdfViewer({
   signatureImage,
   textSearchActiveResult,
   textSearchQuery = '',
+  textSearchExact = false,
   workspace,
 }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1018,43 +1004,51 @@ export function PdfViewer({
 
   useEffect(() => {
     const textLayerElement = textLayerRef.current;
-    const normalizedSearchQuery = textSearchQuery.trim().toLowerCase();
-
-    if (!textLayerElement) {
-      return;
-    }
-
-    const textSpans = Array.from(textLayerElement.querySelectorAll('span'));
-    let pageMatchIndex = 0;
-
-    for (const span of textSpans) {
-      const spanText = (span.textContent ?? '').toLowerCase();
-      const spanMatchCount = countTextOccurrences(spanText, normalizedSearchQuery);
-      const isMatch = Boolean(normalizedSearchQuery) && spanMatchCount > 0;
-
-      if (isMatch) {
-        span.setAttribute('data-search-match', 'true');
-
-        const activeSearchResult = textSearchActiveResult;
-        const isActiveSearchMatch = activeSearchResult
-          ? activeSearchResult.pageId === activePage?.id &&
-            activeSearchResult.pageMatchIndex >= pageMatchIndex &&
-            activeSearchResult.pageMatchIndex < pageMatchIndex + spanMatchCount
-          : false;
-
-        if (isActiveSearchMatch) {
-          span.setAttribute('data-active-search-match', 'true');
-        } else {
-          span.removeAttribute('data-active-search-match');
+    if (!textLayerElement || !hasTextLayer) return;
+    const spans = Array.from(textLayerElement.querySelectorAll('span')).filter(
+      (span) => span.firstChild?.nodeType === Node.TEXT_NODE,
+    );
+    const text = spans.map((span) => span.textContent ?? '').join(' ');
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    const parent = textLayerElement.parentElement;
+    if (!parent) return;
+    parent.appendChild(overlay);
+    const bounds = parent.getBoundingClientRect();
+    const scaleX = bounds.width / parent.offsetWidth || 1;
+    const scaleY = bounds.height / parent.offsetHeight || 1;
+    findTextMatches(text, textSearchQuery, textSearchExact).forEach((match, index) => {
+      let offset = 0;
+      for (const span of spans) {
+        const length = span.textContent?.length ?? 0;
+        const start = Math.max(0, match.start - offset);
+        const end = Math.min(length, match.end - offset);
+        if (end > start && span.firstChild) {
+          const range = document.createRange();
+          range.setStart(span.firstChild, start);
+          range.setEnd(span.firstChild, end);
+          for (const rect of range.getClientRects()) {
+            const mark = document.createElement('div');
+            const active =
+              textSearchActiveResult?.pageId === activePage?.id &&
+              textSearchActiveResult?.pageMatchIndex === index;
+            mark.style.cssText = `position:absolute;pointer-events:none;left:${(rect.left - bounds.left) / scaleX}px;top:${(rect.top - bounds.top) / scaleY}px;width:${rect.width / scaleX}px;height:${rect.height / scaleY}px;background:${active ? 'rgb(255 180 0 / 58%)' : 'rgb(255 214 77 / 32%)'};`;
+            overlay.appendChild(mark);
+          }
         }
-
-        pageMatchIndex += spanMatchCount;
-      } else {
-        span.removeAttribute('data-search-match');
-        span.removeAttribute('data-active-search-match');
+        offset += length + 1;
       }
-    }
-  }, [activePage?.id, hasTextLayer, textSearchActiveResult, textSearchQuery]);
+    });
+    return () => overlay.remove();
+  }, [
+    activePage,
+    hasTextLayer,
+    embeddedTextBoxes,
+    sourceRenderScale,
+    textSearchActiveResult,
+    textSearchQuery,
+    textSearchExact,
+  ]);
 
   useEffect(() => {
     let isStale = false;
@@ -1083,9 +1077,11 @@ export function PdfViewer({
     setRenderError(null);
 
     const draftCanvas = document.createElement('canvas');
+    const controller = new AbortController();
 
     renderPdfPageToCanvas({
       canvas: draftCanvas,
+      signal: controller.signal,
       interactiveForms: true,
       page: activePage,
       scale: sourceRenderScale,
@@ -1117,10 +1113,14 @@ export function PdfViewer({
           setRenderState('error');
           setRenderError('Paperdesk could not render this page.');
         }
+      })
+      .finally(() => {
+        draftCanvas.width = draftCanvas.height = 0;
       });
 
     return () => {
       isStale = true;
+      controller.abort();
     };
   }, [activePage, sourceDocument, sourceRenderScale]);
 

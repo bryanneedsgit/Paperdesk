@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { flushSync } from 'react-dom';
 import {
   decodeWorkspaceTransfer,
@@ -22,14 +23,19 @@ export function useWorkspaceTransfer(options: Options) {
   const [isTransferring, setIsTransferring] = useState(false);
   const locked = useRef(false);
   const pollInFlight = useRef(false);
+  const receiveRequested = useRef(true);
+  const wake = useRef<() => void>(() => {});
   const outgoing = useRef<{ id: string; ids: string[] } | null>(null);
   const acknowledgement = useRef<{ id: string; accepted: boolean } | null>(null);
 
   useEffect(() => {
     let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let ready = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unlisten: (() => void) | undefined;
     const poll = async () => {
       if (disposed) return;
+      timer = undefined;
       if (pollInFlight.current) {
         timer = setTimeout(() => void poll(), 300);
         return;
@@ -46,7 +52,13 @@ export function useWorkspaceTransfer(options: Options) {
             locked.current = false;
             setIsTransferring(false);
           }
-        } else if (!locked.current && !latest.current.isBusy && !acknowledgement.current) {
+        } else if (
+          receiveRequested.current &&
+          !locked.current &&
+          !latest.current.isBusy &&
+          !acknowledgement.current
+        ) {
+          receiveRequested.current = false;
           locked.current = true;
           const transfer = await invoke<[string, string] | null>('receive_workspace_tabs');
           if (!transfer) locked.current = false;
@@ -80,6 +92,7 @@ export function useWorkspaceTransfer(options: Options) {
         if (acknowledgement.current) {
           await invoke('finish_workspace_tabs', acknowledgement.current);
           acknowledgement.current = null;
+          receiveRequested.current = true;
           locked.current = false;
           setIsTransferring(false);
         }
@@ -88,15 +101,53 @@ export function useWorkspaceTransfer(options: Options) {
         if (!outgoing.current && !acknowledgement.current) locked.current = false;
       } finally {
         pollInFlight.current = false;
-        if (!disposed) timer = setTimeout(() => void poll(), 300);
+        // Only unfinished handoffs need retries. An idle window has no repeating timer.
+        if (
+          !disposed &&
+          (outgoing.current ||
+            acknowledgement.current ||
+            (receiveRequested.current && !latest.current.isBusy && !locked.current))
+        ) {
+          timer = setTimeout(() => void poll(), 300);
+        }
       }
     };
-    timer = setTimeout(() => void poll(), 0);
+    const requestReceive = () => {
+      receiveRequested.current = true;
+      wake.current();
+    };
+    wake.current = () => {
+      if (disposed || !ready || pollInFlight.current) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void poll(), 0);
+    };
+    // Subscribe before checking the native queue: this also covers newly created windows.
+    void listen('paperdesk://tabs-available', requestReceive)
+      .then((stop) => {
+        if (disposed) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+        ready = true;
+        requestReceive();
+      })
+      .catch(() => {
+        ready = true;
+        if (!disposed) requestReceive();
+      });
+    window.addEventListener('focus', requestReceive);
     return () => {
       disposed = true;
       clearTimeout(timer);
+      unlisten?.();
+      window.removeEventListener('focus', requestReceive);
     };
   }, []);
+
+  useEffect(() => {
+    if (!options.isBusy && receiveRequested.current) wake.current();
+  }, [options.isBusy]);
 
   const moveTabs = useCallback(
     async (ids: string[], newWindow = false, position?: { x: number; y: number }) => {
@@ -118,6 +169,7 @@ export function useWorkspaceTransfer(options: Options) {
       } catch {
         latest.current.onError('The tabs could not be moved. They are still in this window.');
       } finally {
+        wake.current();
         if (!outgoing.current) {
           locked.current = false;
           setIsTransferring(false);

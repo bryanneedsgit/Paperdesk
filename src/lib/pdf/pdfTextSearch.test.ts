@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createDefaultFormSettings, createDefaultFormatterSettings } from './pdfWorkspace';
-import { searchWorkspaceText } from './pdfTextSearch';
+import { findTextMatches, searchWorkspaceText } from './pdfTextSearch';
 import type { PdfWorkspace } from './types';
 
 vi.mock('./pdfJs', () => ({
@@ -96,5 +96,29 @@ describe('PDF text search', () => {
     expect(results).toHaveLength(2);
     expect(results.map((result) => result.pageMatchIndex)).toEqual([0, 1]);
     expect(results.every((result) => result.pageId === 'page-1')).toBe(true);
+  });
+});
+
+describe('literal match ranges', () => {
+  it('restricts exact search to whole words without case sensitivity', () => {
+    expect(findTextMatches('Cat category CAT', 'cat', true)).toEqual([
+      { start: 0, end: 3 },
+      { start: 13, end: 16 },
+    ]);
+    expect(findTextMatches('Cat category CAT', 'cat')).toHaveLength(3);
+  });
+  it('maps normalized spaces to source character offsets', () => {
+    expect(findTextMatches('a  boarding\npass z', 'boarding pass', true)).toEqual([
+      { start: 3, end: 16 },
+    ]);
+  });
+  it('preserves tolerant fallback only in normal mode', () => {
+    expect(findTextMatches('F l i g h t ticket', 'flight ticket')).toEqual([{ start: 0, end: 18 }]);
+    expect(findTextMatches('F l i g h t ticket', 'flight ticket', true)).toEqual([]);
+  });
+  it('handles literal punctuation, empty queries and Unicode boundaries', () => {
+    expect(findTextMatches('a+b aab', 'a+b', true)).toEqual([{ start: 0, end: 3 }]);
+    expect(findTextMatches('écat cat_', 'cat', true)).toEqual([]);
+    expect(findTextMatches('hello', '   ')).toEqual([]);
   });
 });

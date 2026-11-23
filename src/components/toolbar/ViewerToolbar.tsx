@@ -22,6 +22,8 @@ type ViewerToolbarProps = {
   hasSignatureImage: boolean;
   findActiveIndex: number;
   findQuery: string;
+  findExact?: boolean;
+  onChangeFindExact?: (exact: boolean) => void;
   findResultCount: number;
   findStatus: string;
   isAnnotating: boolean;
@@ -79,6 +81,8 @@ function IconButton({
 }
 
 function FindBar({
+  exact,
+  onChangeExact,
   activeIndex,
   onChangeQuery,
   onClose,
@@ -88,6 +92,8 @@ function FindBar({
   resultCount,
   status,
 }: {
+  exact?: boolean;
+  onChangeExact?: (exact: boolean) => void;
   activeIndex: number;
   onChangeQuery: (query: string) => void;
   onClose: () => void;
@@ -130,6 +136,14 @@ function FindBar({
         type="search"
         value={query}
       />
+      <button
+        className="find-exact-toggle"
+        type="button"
+        aria-pressed={exact ?? false}
+        onClick={() => onChangeExact?.(!exact)}
+      >
+        Exact match: {exact ? 'On' : 'Off'}
+      </button>
       <span className="find-toolbar-status">
         {resultCount > 0 ? `${activeIndex + 1} of ${resultCount}` : status}
       </span>
@@ -167,6 +181,8 @@ export function ViewerToolbar({
   canRotateSelection,
   findActiveIndex,
   findQuery,
+  findExact,
+  onChangeFindExact,
   findResultCount,
   findStatus,
   hasSignatureImage,
@@ -288,6 +304,8 @@ export function ViewerToolbar({
             onNext={onFindNext}
             onPrevious={onFindPrevious}
             query={findQuery}
+            exact={findExact}
+            onChangeExact={onChangeFindExact}
             resultCount={findResultCount}
             status={findStatus}
           />

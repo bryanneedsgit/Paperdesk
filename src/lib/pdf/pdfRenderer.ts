@@ -1,3 +1,4 @@
+import { scheduleThumbnail } from './thumbnailScheduler';
 import type { PDFPageProxy } from 'pdfjs-dist';
 import { mapPdfWebLinks, type PdfWebLink } from './pdfLinks';
 import { ensurePdfJsWorker, pdfjsLib } from './pdfJs';
@@ -25,6 +26,7 @@ const annotationModeEnableForms = 2;
 export type PdfTextLayerItem = EmbeddedTextItem;
 
 type PdfJsRenderTask = {
+  cancel(): void;
   promise: Promise<void>;
 };
 
@@ -57,6 +59,7 @@ type PdfJsPage = {
 };
 
 type PdfJsDocument = {
+  destroy(): Promise<void>;
   getPage(pageNumber: number): Promise<PdfJsPage>;
   numPages: number;
 };
@@ -76,6 +79,7 @@ export type PdfCanvasRenderOptions = {
   canvas: HTMLCanvasElement;
   interactiveForms?: boolean;
   outputScale?: number;
+  signal?: AbortSignal;
   page: PdfPageItem;
   scale: number;
   sourceDocument: PdfDocumentSource;
@@ -137,6 +141,8 @@ async function getPdfDocument(sourceDocument: PdfDocumentSource): Promise<PdfJsD
     return cachedDocument.promise;
   }
 
+  if (cachedDocument) disposePdfDocument(cachedDocument);
+
   const promise = ensurePdfJsWorker().then(
     () =>
       pdfjsLib.getDocument({ data: sourceDocument.bytes.slice() })
@@ -183,11 +189,13 @@ export async function renderPdfPageToCanvas({
   canvas,
   interactiveForms = false,
   outputScale = getDevicePixelRatio(),
+  signal,
   page,
   scale,
   sourceDocument,
 }: PdfCanvasRenderOptions): Promise<PdfRenderedPageSize> {
   const pdfPage = await getPdfPage(sourceDocument, page);
+  if (signal?.aborted) throw new DOMException('Page render cancelled', 'AbortError');
   const viewport = pdfPage.getViewport({ scale, rotation: getRenderRotation(pdfPage, page) });
   const context = canvas.getContext('2d');
 
@@ -203,11 +211,18 @@ export async function renderPdfPageToCanvas({
   context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
   context.clearRect(0, 0, viewport.width, viewport.height);
 
-  await pdfPage.render({
+  const renderTask = pdfPage.render({
     annotationMode: interactiveForms ? annotationModeEnableForms : undefined,
     canvasContext: context,
     viewport,
-  }).promise;
+  });
+  const cancel = () => renderTask.cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    await renderTask.promise;
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
 
   return {
     height: viewport.height,
@@ -384,30 +399,53 @@ function applyTextLayerHorizontalScale(
   }
 }
 
-export async function renderPdfThumbnailToDataUrl({
+export function renderPdfThumbnailToDataUrl({
   page,
   scale = 0.18,
   sourceDocument,
+  signal,
 }: {
   page: PdfPageItem;
   scale?: number;
   sourceDocument: PdfDocumentSource;
+  signal?: AbortSignal;
 }): Promise<PdfThumbnailRenderResult> {
-  const canvas = document.createElement('canvas');
-  const size = await renderPdfPageToCanvas({
-    canvas,
-    outputScale: 1,
-    page,
-    scale,
-    sourceDocument,
-  });
+  return scheduleThumbnail(async () => {
+    const canvas = document.createElement('canvas');
+    try {
+      const size = await renderPdfPageToCanvas({
+        canvas,
+        outputScale: 1,
+        page,
+        scale,
+        sourceDocument,
+        signal,
+      });
+      return { ...size, dataUrl: canvas.toDataURL('image/png') };
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
+  }, signal);
+}
 
-  return {
-    ...size,
-    dataUrl: canvas.toDataURL('image/png'),
-  };
+function disposePdfDocument(entry: PdfDocumentCacheEntry): void {
+  // Destroy terminates PDF.js's worker and releases page/font/image caches.
+  void entry.promise.then((document) => document.destroy()).catch(() => undefined);
+}
+
+export function retainPdfDocuments(documents: PdfDocumentSource[]): void {
+  const retained = new Map(
+    documents.map((document) => [getDocumentCacheKey(document), document.bytes]),
+  );
+  for (const [key, entry] of documentCache) {
+    if (retained.get(key) !== entry.bytes) {
+      documentCache.delete(key);
+      disposePdfDocument(entry);
+    }
+  }
 }
 
 export function clearPdfDocumentCache(): void {
+  for (const entry of documentCache.values()) disposePdfDocument(entry);
   documentCache.clear();
 }

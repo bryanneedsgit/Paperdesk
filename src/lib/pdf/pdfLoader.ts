@@ -129,6 +129,35 @@ export async function getPdfPageCount(bytes: Uint8Array): Promise<number> {
   }
 }
 
+// Probe in the PDF.js worker before using the native decryption path. Sending
+// an ordinary large PDF as a JSON number array multiplies peak memory usage.
+async function inspectUnprotectedPdf(bytes: Uint8Array): Promise<{
+  pageCount: number;
+  hasForms: boolean;
+} | null> {
+  await ensurePdfJsWorker();
+  const task = pdfjsLib.getDocument({ data: bytes.slice(), password: '' });
+  try {
+    const document = await task.promise;
+    const { info } = await document.getMetadata();
+    const metadata = info as {
+      EncryptFilter?: string;
+      IsAcroFormPresent?: boolean;
+      IsXFAPresent?: boolean;
+    };
+    if (metadata.EncryptFilter) return null;
+    return {
+      pageCount: document.numPages,
+      hasForms: metadata.IsAcroFormPresent !== false || metadata.IsXFAPresent === true,
+    };
+  } catch {
+    // Preserve native password handling and existing error classification.
+    return null;
+  } finally {
+    await task.destroy().catch(() => undefined);
+  }
+}
+
 export async function loadPdfFromPath(
   path: string,
   options: PdfLoadOptions = {},
@@ -153,10 +182,13 @@ export async function loadPdfFromBytes({
   fileName: string;
   filePath?: string;
 } & PdfLoadOptions): Promise<PdfDocumentSource> {
+  const inspection = await inspectUnprotectedPdf(bytes);
   let preparedBytes: Awaited<ReturnType<typeof preparePdfBytesForOpen>>;
 
   try {
-    preparedBytes = await preparePdfBytesForOpen({ bytes, fileName, requestPassword });
+    preparedBytes = inspection
+      ? { bytes, wasEncrypted: false }
+      : await preparePdfBytesForOpen({ bytes, fileName, requestPassword });
   } catch (error) {
     if (error instanceof PdfPasswordCancelledError) {
       throw error;
@@ -175,11 +207,14 @@ export async function loadPdfFromBytes({
     );
   }
 
-  const pageCount = await getPdfPageCount(preparedBytes.bytes);
-  const formFields = await detectPdfFormFields(preparedBytes.bytes).catch((error) => {
-    logDeveloperError(`Unable to inspect form fields: ${fileName}`, error);
-    return [];
-  });
+  const pageCount = inspection?.pageCount ?? (await getPdfPageCount(preparedBytes.bytes));
+  const formFields =
+    inspection?.hasForms === false
+      ? []
+      : await detectPdfFormFields(preparedBytes.bytes).catch((error) => {
+          logDeveloperError(`Unable to inspect form fields: ${fileName}`, error);
+          return [];
+        });
 
   if (preparedBytes.wasEncrypted) {
     onPasswordAccepted?.(preparedBytes.password ?? '');

@@ -5311,3 +5311,27 @@ button:disabled {
 .pdf-link-error button {
   margin-left: 8px;
 }
+
+.find-exact-toggle {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  color: var(--color-text);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.find-exact-toggle[aria-pressed='true'] {
+  background: #fff0b3;
+  border-color: #a67000;
+  color: #604400;
+}
+
+.find-exact-toggle:focus-visible {
+  outline: 2px solid #a67000;
+  outline-offset: 2px;
+}

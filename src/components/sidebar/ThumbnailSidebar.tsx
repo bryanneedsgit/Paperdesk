@@ -227,10 +227,9 @@ function PageThumbnail({
 
     setRenderFailed(false);
 
-    renderPdfThumbnailToDataUrl({
-      page,
-      sourceDocument,
-    })
+    const controller = new AbortController();
+
+    renderPdfThumbnailToDataUrl({ signal: controller.signal, page, sourceDocument })
       .then((result) => {
         if (isStale) {
           return;
@@ -247,6 +246,7 @@ function PageThumbnail({
 
     return () => {
       isStale = true;
+      controller.abort();
     };
   }, [isThumbnailVisible, onThumbnailRendered, page, sourceDocument]);
 

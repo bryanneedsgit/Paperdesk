@@ -6,8 +6,9 @@ import { createDocumentSaveState } from '../project/documentSaveState';
 import { encodeWorkspaceTransfer, type WorkspaceTab } from './workspaceTransfer';
 import { useWorkspaceTransfer } from './useWorkspaceTransfer';
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen }));
 
 function setupOptions() {
   const workspace = createWorkspaceFromDocuments([
@@ -41,6 +42,7 @@ async function tick() {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  listen.mockReset().mockResolvedValue(() => {});
   invoke.mockReset();
   invoke.mockResolvedValue(null);
 });
@@ -130,5 +132,50 @@ describe('workspace handoff', () => {
     await tick();
     expect(options.receive).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith('finish_workspace_tabs', { id: 'bad', accepted: false });
+  });
+  it('makes no further native calls or timer wakeups during an idle hour', async () => {
+    renderHook(() => useWorkspaceTransfer(setupOptions()));
+    await tick();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('receive_workspace_tabs');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('wakes on a native notification and stops again after the handoff', async () => {
+    const options = setupOptions();
+    const payload = encodeWorkspaceTransfer(options.getTabs(), options.passwords);
+    options.getTabs = () => [];
+    renderHook(() => useWorkspaceTransfer(options));
+    await tick();
+    invoke.mockResolvedValueOnce(['arrived', payload]);
+    act(() => listen.mock.calls[0][1]());
+    await tick();
+    await tick();
+    expect(options.receive).toHaveBeenCalledOnce();
+    const count = invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(invoke).toHaveBeenCalledTimes(count);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('defers incoming transfers while busy without polling and resumes when ready', async () => {
+    const options = setupOptions();
+    const { rerender } = renderHook(
+      ({ busy }) => useWorkspaceTransfer({ ...options, isBusy: busy }),
+      { initialProps: { busy: true } },
+    );
+    await tick();
+    act(() => listen.mock.calls[0][1]());
+    await tick();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    rerender({ busy: false });
+    await tick();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('receive_workspace_tabs');
   });
 });
