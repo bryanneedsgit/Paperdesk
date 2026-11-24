@@ -7,7 +7,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[derive(Default)]
 pub struct TabTransfers(Mutex<HashMap<String, Transfer>>, Mutex<Vec<String>>);
@@ -106,6 +106,7 @@ pub async fn move_workspace_tabs(
             claimed: false,
         },
     );
+    let _ = app.emit_to(target.label(), "paperdesk://tabs-available", ());
     let _ = target.set_focus();
     Ok(Some(id))
 }
@@ -175,7 +176,17 @@ pub fn workspace_tabs_status(
         transfer.payload = None;
     }
     // Keep completion idempotent when an IPC response is lost. Payload bytes were released above.
-    Ok(transfer.status.clone())
+    let status = transfer.status.clone();
+    let target = transfer.target.clone();
+    drop(transfers);
+    if status == "pending" {
+        // A source only checks status during a live handoff. Re-notify here to
+        // recover a missed notification/IPC response without any idle polling.
+        let _ = window
+            .app_handle()
+            .emit_to(target, "paperdesk://tabs-available", ());
+    }
+    Ok(status)
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {

@@ -266,7 +266,9 @@ function runSourceStoreTransaction<T>(
   );
 }
 
-export async function writeAutosavedWorkspaceSources(workspace: PdfWorkspace): Promise<void> {
+export async function writeAutosavedWorkspaceSources(
+  workspace: Pick<PdfWorkspace, 'documents'>,
+): Promise<void> {
   await openWorkspaceSourceDatabase().then(
     (database) =>
       new Promise<void>((resolve, reject) => {

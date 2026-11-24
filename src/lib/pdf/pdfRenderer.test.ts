@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearPdfDocumentCache,
   getPdfPageWebLinks,
+  getPdfPageSize,
+  retainPdfDocuments,
+  renderPdfPageToCanvas,
   renderPdfPageTextLayer,
   type PdfTextLayerItem,
 } from './pdfRenderer';
@@ -145,5 +148,70 @@ describe('PDF renderer', () => {
     const links = await getPdfPageWebLinks(sourceDocument, { ...sourcePage, rotation: 90 });
     expect(getViewport).toHaveBeenCalledWith({ scale: 1, rotation: 180 });
     expect(links[0].rect).toEqual({ x: 20, y: 10, width: 20, height: 20 });
+  });
+  it('cancels an obsolete render instead of letting PDF.js finish it in the background', async () => {
+    let started!: () => void;
+    const start = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let rejectRender!: (error: Error) => void;
+    const promise = new Promise<void>((_resolve, reject) => {
+      rejectRender = reject;
+    });
+    const cancel = vi.fn(() => rejectRender(new DOMException('Cancelled', 'AbortError')));
+    pdfJsMocks.getDocument.mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        destroy: vi.fn().mockResolvedValue(undefined),
+        getPage: async () => ({
+          rotate: 0,
+          getViewport: () => ({ width: 200, height: 100 }),
+          render: () => {
+            started();
+            return { promise, cancel };
+          },
+        }),
+      }),
+    });
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      setTransform: vi.fn(),
+      clearRect: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    const controller = new AbortController();
+    const rendering = renderPdfPageToCanvas({
+      canvas,
+      sourceDocument,
+      page: sourcePage,
+      scale: 1,
+      signal: controller.signal,
+    });
+    const rejected = expect(rendering).rejects.toMatchObject({ name: 'AbortError' });
+    await start;
+    controller.abort();
+    await rejected;
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses open document workers, then destroys workers for closed documents', async () => {
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    pdfJsMocks.getDocument.mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        destroy,
+        getPage: async () => ({ rotate: 0, getViewport: () => ({ width: 200, height: 100 }) }),
+      }),
+    });
+    await getPdfPageSize(sourceDocument, sourcePage);
+    await getPdfPageSize(sourceDocument, sourcePage);
+    expect(pdfJsMocks.getDocument).toHaveBeenCalledTimes(1);
+    retainPdfDocuments([sourceDocument]);
+    await Promise.resolve();
+    expect(destroy).not.toHaveBeenCalled();
+    retainPdfDocuments([]);
+    await Promise.resolve();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    await getPdfPageSize(sourceDocument, sourcePage);
+    expect(pdfJsMocks.getDocument).toHaveBeenCalledTimes(2);
   });
 });

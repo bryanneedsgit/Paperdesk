@@ -1,3 +1,5 @@
+import { retainPdfDocuments } from '../lib/pdf/pdfRenderer';
+import { useWorkspaceAutosave } from '../lib/storage/useWorkspaceAutosave';
 import { useWorkspaceTransfer } from '../lib/windows/useWorkspaceTransfer';
 import type { WorkspaceTab } from '../lib/windows/workspaceTransfer';
 import { printDocument } from '../lib/print/printDocument';
@@ -483,6 +485,9 @@ export function AppShell() {
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([]);
   const workspaceTabsRef = useRef(workspaceTabs);
   workspaceTabsRef.current = workspaceTabs;
+  useEffect(() => {
+    retainPdfDocuments(workspaceTabs.flatMap((tab) => tab.history.present.documents));
+  }, [workspaceTabs]);
   const [pendingSaveRequest, setPendingSaveRequest] = useState<DocumentSaveRequest | null>(null);
   const pendingSaveResolver = useRef<((choice: DocumentSaveChoice) => void) | null>(null);
   const saveInProgressRef = useRef(false);
@@ -544,6 +549,7 @@ export function AppShell() {
   const [isStatusZoomOpen, setIsStatusZoomOpen] = useState(false);
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
+  const [findExact, setFindExact] = useState(false);
   const [findResults, setFindResults] = useState<PdfTextSearchResult[]>([]);
   const [findActiveIndex, setFindActiveIndex] = useState(0);
   const [isFindingText, setIsFindingText] = useState(false);
@@ -3058,16 +3064,7 @@ export function AppShell() {
     };
   }, [recoverySnapshot]);
 
-  useEffect(() => {
-    if (!storageSettings.autosaveWorkspace || !workspace) {
-      return;
-    }
-
-    writeAutosavedWorkspace(workspace, activeWorkspaceTab?.saveState);
-    void writeAutosavedWorkspaceSources(workspace).catch((error) => {
-      logDeveloperError('Unable to cache autosaved source PDFs.', error);
-    });
-  }, [activeWorkspaceTab?.saveState, storageSettings.autosaveWorkspace, workspace]);
+  useWorkspaceAutosave(workspace, activeWorkspaceTab?.saveState, storageSettings.autosaveWorkspace);
 
   useEffect(() => {
     if (!workspaceToast) {
@@ -3263,7 +3260,7 @@ export function AppShell() {
       setIsFindingText(true);
       setFindError(null);
 
-      searchWorkspaceText(searchWorkspace, trimmedFindQuery)
+      searchWorkspaceText(searchWorkspace, trimmedFindQuery, { exact: findExact })
         .then((results) => {
           if (isDisposed) {
             return;
@@ -3297,7 +3294,7 @@ export function AppShell() {
       isDisposed = true;
       window.clearTimeout(searchTimeout);
     };
-  }, [activatePage, findSearchKey, isFindOpen, trimmedFindQuery]);
+  }, [activatePage, findSearchKey, isFindOpen, trimmedFindQuery, findExact]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -3393,6 +3390,8 @@ export function AppShell() {
         canRotateSelection={selectedVisiblePageIds.length > 0}
         findActiveIndex={findActiveIndex}
         findQuery={findQuery}
+        findExact={findExact}
+        onChangeFindExact={setFindExact}
         findResultCount={findResults.length}
         findStatus={findStatus}
         hasSignatureImage={Boolean(signatureImage)}
@@ -3497,6 +3496,7 @@ export function AppShell() {
                 signatureImage={signatureImage}
                 textSearchActiveResult={findResults[findActiveIndex] ?? null}
                 textSearchQuery={isFindOpen ? findQuery : ''}
+                textSearchExact={findExact}
                 workspace={workspace}
               />
             )

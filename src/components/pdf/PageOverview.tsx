@@ -137,7 +137,14 @@ const OverviewPageThumbnail = memo(function OverviewPageThumbnail({
 
     setRenderFailed(false);
 
-    renderPdfThumbnailToDataUrl({ page, scale: overviewThumbnailScale, sourceDocument })
+    const controller = new AbortController();
+
+    renderPdfThumbnailToDataUrl({
+      signal: controller.signal,
+      page,
+      scale: overviewThumbnailScale,
+      sourceDocument,
+    })
       .then((result) => {
         if (isStale) {
           return;
@@ -157,6 +164,7 @@ const OverviewPageThumbnail = memo(function OverviewPageThumbnail({
 
     return () => {
       isStale = true;
+      controller.abort();
     };
   }, [hasOverviewThumbnail, isGeneratedPage, isVisible, onThumbnailRendered, page, sourceDocument]);
 

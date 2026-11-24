@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
+import { findTextMatches } from '../../lib/pdf/pdfTextSearch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEmptyWorkspace, insertBlankPage } from '../../lib/pdf/pdfWorkspace';
@@ -48,6 +49,36 @@ function createProps(overrides: Partial<ViewerToolbarProps> = {}): ViewerToolbar
 
 describe('ViewerToolbar bookmarks', () => {
   afterEach(cleanup);
+
+  it('shows and toggles exact matching in both directions', () => {
+    function SearchHarness() {
+      const [exact, setExact] = useState(false);
+      return (
+        <ViewerToolbar
+          {...createProps({
+            isFindOpen: true,
+            findQuery: 'cat',
+            findExact: exact,
+            onChangeFindExact: setExact,
+            findResultCount: findTextMatches('cat category', 'cat', exact).length,
+          })}
+        />
+      );
+    }
+    render(<SearchHarness />);
+    const off = screen.getByRole('button', { name: 'Exact match: Off' });
+    expect(off.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    fireEvent.click(off);
+    const on = screen.getByRole('button', { name: 'Exact match: On' });
+    expect(on.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('1 of 1')).toBeTruthy();
+    fireEvent.click(on);
+    expect(
+      screen.getByRole('button', { name: 'Exact match: Off' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+  });
 
   it('toggles the active page bookmark with an accessible pressed state', () => {
     const onToggleActivePageBookmark = vi.fn();
